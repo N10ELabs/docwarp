@@ -1,0 +1,15 @@
+[package]
+name = "instruct-docx"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+quick-xml.workspace = true
+zip.workspace = true
+reqwest.workspace = true
+instruct-core = { path = "../instruct-core" }
+
+[dev-dependencies]
+tempfile.workspace = true

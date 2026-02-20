@@ -1,0 +1,27 @@
+[workspace]
+members = [
+  "crates/instruct-cli",
+  "crates/instruct-core",
+  "crates/instruct-md",
+  "crates/instruct-docx",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+anyhow = "1.0"
+thiserror = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+clap = { version = "4.5", features = ["derive"] }
+pulldown-cmark = "0.13"
+quick-xml = "0.37"
+zip = { version = "2.1", default-features = false, features = ["deflate"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+walkdir = "2.5"
+tempfile = "3.10"
