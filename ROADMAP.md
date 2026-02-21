@@ -23,9 +23,9 @@ Last updated: 2026-02-20
 - `P2`: post-MVP enhancements.
 
 ## Phase 1: Reliability Hardening (`P0`)
-- [ ] Create fixture corpus under `fixtures/md` and `fixtures/docx` for all in-scope structures.
-- [ ] Add golden tests for `md -> docx` structure expectations.
-- [ ] Add golden tests for `docx -> md` markdown expectations.
+- [x] Create fixture corpus under `fixtures/md` and `fixtures/docx` for all in-scope structures.
+- [x] Add golden tests for `md -> docx` structure expectations.
+- [x] Add golden tests for `docx -> md` markdown expectations.
 - [ ] Add round-trip tests for:
   - [ ] `md -> docx -> md`
   - [ ] `docx -> md -> docx`
@@ -70,6 +70,7 @@ Last updated: 2026-02-20
 ## Phase 5: Short-Term Enhancements (`P1`)
 - [ ] Add batch conversion mode (`--glob` or directory input) while keeping single-file mode default.
 - [ ] Add compatibility mode flags (for example, stricter markdown output for docs platforms).
+- [ ] Simplify CLI usage with config profiles and short command aliases so common permission-related flags/defaults (for example, remote image policy, strict mode, template/style-map paths) do not need to be repeated.
 - [ ] Improve style-map validation with actionable error diagnostics.
 - [ ] Native Word equation support for bidirectional `md <-> docx`, including configurable equation style mapping so users do not need manual Insert Equation restyling (for example, statistical-method appendices).
 - [ ] Add performance benchmark suite for large documents.
@@ -98,8 +99,8 @@ Last updated: 2026-02-20
   - priorities change
 
 ## Immediate Next 10 Tasks
-- [ ] Add fixture directories and first 10 canonical samples.
-- [ ] Add golden test harness helper utilities.
+- [x] Add fixture directories and first 10 canonical samples.
+- [x] Add golden test harness helper utilities.
 - [ ] Add strict-mode integration test for warning exit code `2`.
 - [ ] Add invalid-style-map integration test.
 - [ ] Add invalid-template integration test.

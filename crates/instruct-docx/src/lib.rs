@@ -891,6 +891,7 @@ pub fn read_docx(
     let mut run_style = RunStyle::default();
     let mut current_hyperlink: Option<(String, Vec<Inline>)> = None;
     let mut pending_list: Option<(bool, Vec<Vec<Inline>>)> = None;
+    let mut in_text_node = false;
 
     let mut reader = Reader::from_str(&document_xml);
     reader.config_mut().trim_text(false);
@@ -901,6 +902,7 @@ pub fn read_docx(
             Ok(Event::Start(start)) => {
                 let name = start.name().as_ref().to_vec();
                 match local_name(&name) {
+                    b"t" => in_text_node = true,
                     b"p" => paragraph = Some(ParseParagraph::default()),
                     b"pStyle" => {
                         if let Some(value) = attr_value(&start, b"val") {
@@ -1018,6 +1020,11 @@ pub fn read_docx(
                 }
             }
             Ok(Event::Text(text)) => {
+                if !in_text_node {
+                    buf.clear();
+                    continue;
+                }
+
                 let decoded = decode_text(&reader, text)?;
                 if decoded.is_empty() {
                     buf.clear();
@@ -1034,6 +1041,7 @@ pub fn read_docx(
             Ok(Event::End(end)) => {
                 let name = end.name().as_ref().to_vec();
                 match local_name(&name) {
+                    b"t" => in_text_node = false,
                     b"hyperlink" => {
                         if let Some((url, text)) = current_hyperlink.take() {
                             push_inline_target(

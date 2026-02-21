@@ -163,9 +163,13 @@ pub fn parse_markdown(input: &str) -> Result<(Document, Vec<ConversionWarning>)>
             },
             Event::End(tag) => match tag {
                 TagEnd::Paragraph => {
-                    if let Some(BlockContext::Paragraph(content)) = pop_context(&mut block_stack) {
-                        if !content.is_empty() {
-                            blocks.push(Block::Paragraph(content));
+                    if matches!(block_stack.last(), Some(BlockContext::Paragraph(_))) {
+                        if let Some(BlockContext::Paragraph(content)) =
+                            pop_context(&mut block_stack)
+                        {
+                            if !content.is_empty() {
+                                blocks.push(Block::Paragraph(content));
+                            }
                         }
                     }
                 }
