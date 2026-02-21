@@ -1,6 +1,6 @@
 # instruct Roadmap
 
-Last updated: 2026-02-20
+Last updated: 2026-02-21
 
 ## Current State
 - MVP scaffold is implemented and passes local tests.
@@ -66,6 +66,7 @@ Last updated: 2026-02-20
   - [x] binary download
   - [x] Homebrew tap
 - [ ] Publish `v0.1.0` and changelog.
+sample
 
 ## Phase 5: Short-Term Enhancements (`P1`)
 - [ ] Add batch conversion mode (`--glob` or directory input) while keeping single-file mode default.
