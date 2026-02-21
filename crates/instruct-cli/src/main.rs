@@ -7,7 +7,7 @@ use anyhow::{Context, Result, anyhow};
 use clap::{Parser, Subcommand};
 use instruct_core::{
     AppConfig, ConversionDirection, ConversionReport, ConversionWarning, Document, StyleMap,
-    UnsupportedPolicy, WarningCode, resolve_style_map, style_map,
+    UnsupportedPolicy, resolve_style_map, style_map,
 };
 use instruct_docx::{DocxReadOptions, DocxWriteOptions, read_docx, write_docx};
 use instruct_md::{parse_markdown, render_markdown};
@@ -360,16 +360,7 @@ fn emit_summary(
 
     println!("warnings: {}", warnings.len());
     for warning in warnings {
-        let code = match warning.code {
-            WarningCode::UnsupportedFeature => "unsupported_feature",
-            WarningCode::ImageLoadFailed => "image_load_failed",
-            WarningCode::RemoteImageBlocked => "remote_image_blocked",
-            WarningCode::MissingMedia => "missing_media",
-            WarningCode::InvalidStyleMap => "invalid_style_map",
-            WarningCode::InvalidTemplate => "invalid_template",
-            WarningCode::CorruptDocx => "corrupt_docx",
-            WarningCode::NestedStructureSimplified => "nested_structure_simplified",
-        };
+        let code = warning.code.as_str();
         if let Some(location) = &warning.location {
             println!("- [{code}] {} ({location})", warning.message);
         } else {

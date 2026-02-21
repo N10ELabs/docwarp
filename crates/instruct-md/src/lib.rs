@@ -242,10 +242,7 @@ pub fn parse_markdown(input: &str) -> Result<(Document, Vec<ConversionWarning>)>
                         if headers.is_empty() && !rows.is_empty() {
                             headers = rows.remove(0);
                         }
-                        blocks.push(Block::Table {
-                            headers,
-                            rows,
-                        });
+                        blocks.push(Block::Table { headers, rows });
                     }
                 }
                 TagEnd::Emphasis => close_inline_context(&mut inline_stack, &mut block_stack),

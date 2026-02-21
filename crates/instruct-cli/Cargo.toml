@@ -18,3 +18,4 @@ instruct-docx = { path = "../instruct-docx" }
 
 [dev-dependencies]
 tempfile.workspace = true
+zip.workspace = true

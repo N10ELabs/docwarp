@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -1109,17 +1109,17 @@ pub fn read_docx(
 
 fn read_relationships<R: Read + std::io::Seek>(
     archive: &mut ZipArchive<R>,
-) -> Result<HashMap<String, String>> {
+) -> Result<BTreeMap<String, String>> {
     let mut rels_xml = String::new();
 
     if let Ok(mut rels) = archive.by_name("word/_rels/document.xml.rels") {
         rels.read_to_string(&mut rels_xml)
             .context("failed reading word/_rels/document.xml.rels")?;
     } else {
-        return Ok(HashMap::new());
+        return Ok(BTreeMap::new());
     }
 
-    let mut relationships = HashMap::new();
+    let mut relationships = BTreeMap::new();
     let mut reader = Reader::from_str(&rels_xml);
     reader.config_mut().trim_text(true);
 
@@ -1150,14 +1150,14 @@ fn read_relationships<R: Read + std::io::Seek>(
 
 fn extract_image_assets<R: Read + std::io::Seek>(
     archive: &mut ZipArchive<R>,
-    relationships: &HashMap<String, String>,
+    relationships: &BTreeMap<String, String>,
     assets_dir: &Path,
     warnings: &mut Vec<ConversionWarning>,
-) -> Result<HashMap<String, String>> {
+) -> Result<BTreeMap<String, String>> {
     fs::create_dir_all(assets_dir)
         .with_context(|| format!("failed creating assets directory: {}", assets_dir.display()))?;
 
-    let mut rel_to_output = HashMap::new();
+    let mut rel_to_output = BTreeMap::new();
 
     for (rel_id, target) in relationships {
         if !target.contains("media/") {

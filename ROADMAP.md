@@ -26,17 +26,17 @@ Last updated: 2026-02-20
 - [x] Create fixture corpus under `fixtures/md` and `fixtures/docx` for all in-scope structures.
 - [x] Add golden tests for `md -> docx` structure expectations.
 - [x] Add golden tests for `docx -> md` markdown expectations.
-- [ ] Add round-trip tests for:
-  - [ ] `md -> docx -> md`
-  - [ ] `docx -> md -> docx`
-- [ ] Add explicit failure tests:
-  - [ ] corrupt docx
-  - [ ] missing media
-  - [ ] invalid style map
-  - [ ] invalid template path
-  - [ ] unsupported feature warnings
-- [ ] Lock warning code catalog in docs and tests.
-- [ ] Improve parse/write determinism (stable ordering where applicable).
+- [x] Add round-trip tests for:
+  - [x] `md -> docx -> md`
+  - [x] `docx -> md -> docx`
+- [x] Add explicit failure tests:
+  - [x] corrupt docx
+  - [x] missing media
+  - [x] invalid style map
+  - [x] invalid template path
+  - [x] unsupported feature warnings
+- [x] Lock warning code catalog in docs and tests.
+- [x] Improve parse/write determinism (stable ordering where applicable).
 
 ## Phase 2: Fidelity and Edge Cases (`P0`)
 - [ ] Improve table handling for uneven rows and empty cells.
@@ -101,10 +101,10 @@ Last updated: 2026-02-20
 ## Immediate Next 10 Tasks
 - [x] Add fixture directories and first 10 canonical samples.
 - [x] Add golden test harness helper utilities.
-- [ ] Add strict-mode integration test for warning exit code `2`.
-- [ ] Add invalid-style-map integration test.
-- [ ] Add invalid-template integration test.
-- [ ] Add missing-media integration test.
+- [x] Add strict-mode integration test for warning exit code `2`.
+- [x] Add invalid-style-map integration test.
+- [x] Add invalid-template integration test.
+- [x] Add missing-media integration test.
 - [ ] Add docs for JSON report schema and sample output.
 - [ ] Finalize release workflow placeholders.
 - [ ] Draft `CHANGELOG.md` and release template.

@@ -26,6 +26,10 @@ instruct md2docx <input.md> --output <output.docx> [--template <template.dotx>] 
 instruct docx2md <input.docx> --output <output.md> [--assets-dir <dir>] [--style-map <map.yml>] [--config <instruct.yml>] [--report <report.json>] [--strict]
 ```
 
+## Warning Codes
+
+See `docs/warnings.md` for the stable warning-code catalog.
+
 ## License
 
 Apache-2.0
