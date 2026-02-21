@@ -72,6 +72,7 @@ Last updated: 2026-02-21
 - [ ] Add compatibility mode flags (for example, stricter markdown output for docs platforms).
 - [ ] Simplify CLI usage with config profiles and short command aliases so common permission-related flags/defaults (for example, remote image policy, strict mode, template/style-map paths) do not need to be repeated.
 - [ ] Improve style-map validation with actionable error diagnostics.
+- [x] Improve heading-style fidelity in `md2docx`: preserve Markdown heading levels `h1`-`h6` as distinct DOCX heading styles (or configurable mappings) instead of collapsing `h4`-`h6`.
 - [ ] Native Word equation support for bidirectional `md <-> docx`, including configurable equation style mapping so users do not need manual Insert Equation restyling (for example, statistical-method appendices).
 - [ ] Add performance benchmark suite for large documents.
 - [ ] Add regression test pack from real-world anonymized docs.

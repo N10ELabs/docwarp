@@ -20,6 +20,9 @@ impl StyleMap {
         docx_to_md.insert("Heading1".to_string(), "h1".to_string());
         docx_to_md.insert("Heading2".to_string(), "h2".to_string());
         docx_to_md.insert("Heading3".to_string(), "h3".to_string());
+        docx_to_md.insert("Heading4".to_string(), "h4".to_string());
+        docx_to_md.insert("Heading5".to_string(), "h5".to_string());
+        docx_to_md.insert("Heading6".to_string(), "h6".to_string());
         docx_to_md.insert("Normal".to_string(), "paragraph".to_string());
         docx_to_md.insert("Quote".to_string(), "quote".to_string());
         docx_to_md.insert("Code".to_string(), "code".to_string());
@@ -32,6 +35,9 @@ impl StyleMap {
         md_to_docx.insert("h1".to_string(), "Heading1".to_string());
         md_to_docx.insert("h2".to_string(), "Heading2".to_string());
         md_to_docx.insert("h3".to_string(), "Heading3".to_string());
+        md_to_docx.insert("h4".to_string(), "Heading4".to_string());
+        md_to_docx.insert("h5".to_string(), "Heading5".to_string());
+        md_to_docx.insert("h6".to_string(), "Heading6".to_string());
         md_to_docx.insert("paragraph".to_string(), "Normal".to_string());
         md_to_docx.insert("quote".to_string(), "Quote".to_string());
         md_to_docx.insert("code".to_string(), "Code".to_string());
@@ -137,5 +143,21 @@ mod tests {
             merged.md_to_docx.get("paragraph").map(String::as_str),
             Some("ConfigParagraph")
         );
+    }
+
+    #[test]
+    fn builtin_style_map_includes_h1_through_h6() {
+        let merged = resolve_style_map(None, None);
+
+        for (token, style) in [
+            ("h1", "Heading1"),
+            ("h2", "Heading2"),
+            ("h3", "Heading3"),
+            ("h4", "Heading4"),
+            ("h5", "Heading5"),
+            ("h6", "Heading6"),
+        ] {
+            assert_eq!(merged.md_to_docx.get(token).map(String::as_str), Some(style));
+        }
     }
 }

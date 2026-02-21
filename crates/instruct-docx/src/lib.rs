@@ -136,6 +136,14 @@ pub fn write_docx(
     }
 
     let mut state = DocxBuildState::default();
+    // styles.xml must be explicitly related from document.xml for paragraph/table styles to render.
+    let styles_rel_id = state.next_rel_id();
+    state.relationships.push(Relationship {
+        id: styles_rel_id,
+        rel_type: format!("{OFFICE_REL_NS}/styles"),
+        target: "styles.xml".to_string(),
+        target_mode: None,
+    });
     let document_xml = build_document_xml(
         document,
         markdown_base_dir,
@@ -223,7 +231,9 @@ fn build_document_xml(
                     1 => "h1",
                     2 => "h2",
                     3 => "h3",
-                    _ => "h3",
+                    4 => "h4",
+                    5 => "h5",
+                    _ => "h6",
                 };
 
                 body.push_str(&render_paragraph(
@@ -796,6 +806,9 @@ fn default_styles_xml() -> &'static str {
   <w:style w:type=\"paragraph\" w:styleId=\"Heading1\"><w:name w:val=\"heading 1\"/><w:basedOn w:val=\"Normal\"/><w:qFormat/><w:rPr><w:b/><w:sz w:val=\"32\"/></w:rPr></w:style>
   <w:style w:type=\"paragraph\" w:styleId=\"Heading2\"><w:name w:val=\"heading 2\"/><w:basedOn w:val=\"Normal\"/><w:qFormat/><w:rPr><w:b/><w:sz w:val=\"28\"/></w:rPr></w:style>
   <w:style w:type=\"paragraph\" w:styleId=\"Heading3\"><w:name w:val=\"heading 3\"/><w:basedOn w:val=\"Normal\"/><w:qFormat/><w:rPr><w:b/><w:sz w:val=\"24\"/></w:rPr></w:style>
+  <w:style w:type=\"paragraph\" w:styleId=\"Heading4\"><w:name w:val=\"heading 4\"/><w:basedOn w:val=\"Normal\"/><w:qFormat/><w:rPr><w:b/><w:sz w:val=\"22\"/></w:rPr></w:style>
+  <w:style w:type=\"paragraph\" w:styleId=\"Heading5\"><w:name w:val=\"heading 5\"/><w:basedOn w:val=\"Normal\"/><w:qFormat/><w:rPr><w:b/><w:sz w:val=\"20\"/></w:rPr></w:style>
+  <w:style w:type=\"paragraph\" w:styleId=\"Heading6\"><w:name w:val=\"heading 6\"/><w:basedOn w:val=\"Normal\"/><w:qFormat/><w:rPr><w:b/><w:sz w:val=\"18\"/></w:rPr></w:style>
   <w:style w:type=\"paragraph\" w:styleId=\"Quote\"><w:name w:val=\"Quote\"/><w:basedOn w:val=\"Normal\"/><w:pPr><w:ind w:left=\"720\"/></w:pPr><w:rPr><w:i/></w:rPr></w:style>
   <w:style w:type=\"paragraph\" w:styleId=\"Code\"><w:name w:val=\"Code\"/><w:basedOn w:val=\"Normal\"/><w:pPr><w:spacing w:line=\"240\"/></w:pPr><w:rPr><w:rFonts w:ascii=\"Consolas\" w:hAnsi=\"Consolas\"/><w:sz w:val=\"20\"/></w:rPr></w:style>
   <w:style w:type=\"paragraph\" w:styleId=\"ListBullet\"><w:name w:val=\"List Bullet\"/><w:basedOn w:val=\"Normal\"/><w:pPr><w:ind w:left=\"720\"/></w:pPr></w:style>
@@ -1273,6 +1286,18 @@ fn classify_paragraph(
                     level: 3,
                     content: paragraph.inlines,
                 },
+                "h4" => Block::Heading {
+                    level: 4,
+                    content: paragraph.inlines,
+                },
+                "h5" => Block::Heading {
+                    level: 5,
+                    content: paragraph.inlines,
+                },
+                "h6" => Block::Heading {
+                    level: 6,
+                    content: paragraph.inlines,
+                },
                 "quote" => Block::BlockQuote(paragraph.inlines),
                 "code" => Block::CodeBlock {
                     language: None,
@@ -1461,6 +1486,65 @@ mod tests {
     }
 
     #[test]
+    fn write_and_read_docx_roundtrip_preserves_heading_levels_h4_to_h6() {
+        let dir = tempdir().expect("tempdir should be created");
+        let output_docx = dir.path().join("out.docx");
+
+        let doc = Document {
+            blocks: vec![
+                Block::Heading {
+                    level: 4,
+                    content: vec![Inline::Text("Level 4".into())],
+                },
+                Block::Heading {
+                    level: 5,
+                    content: vec![Inline::Text("Level 5".into())],
+                },
+                Block::Heading {
+                    level: 6,
+                    content: vec![Inline::Text("Level 6".into())],
+                },
+            ],
+        };
+
+        let write_warnings = write_docx(
+            &doc,
+            dir.path(),
+            &output_docx,
+            &DocxWriteOptions {
+                allow_remote_images: false,
+                style_map: StyleMap::builtin(),
+                template: None,
+            },
+        )
+        .expect("DOCX write should succeed");
+
+        assert!(write_warnings.is_empty());
+
+        let (read_doc, read_warnings) = read_docx(
+            &output_docx,
+            &DocxReadOptions {
+                assets_dir: dir.path().join("assets"),
+                style_map: StyleMap::builtin(),
+            },
+        )
+        .expect("DOCX read should succeed");
+
+        assert!(read_warnings.is_empty());
+
+        let heading_levels: Vec<u8> = read_doc
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                Block::Heading { level, .. } => Some(*level),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(heading_levels, vec![4, 5, 6]);
+    }
+
+    #[test]
     fn remote_images_warn_when_disabled() {
         let dir = tempdir().expect("tempdir should be created");
         let output_docx = dir.path().join("out.docx");
@@ -1637,6 +1721,51 @@ mod tests {
         assert!(
             styles.contains("ListBullet"),
             "fallback styles should include built-in style definitions"
+        );
+    }
+
+    #[test]
+    fn writes_document_relationship_for_styles_xml() {
+        let dir = tempdir().expect("tempdir should be created");
+        let output_docx = dir.path().join("out.docx");
+        let doc = Document {
+            blocks: vec![Block::Heading {
+                level: 2,
+                content: vec![Inline::Text("Overview".into())],
+            }],
+        };
+
+        let warnings = write_docx(
+            &doc,
+            dir.path(),
+            &output_docx,
+            &DocxWriteOptions {
+                allow_remote_images: false,
+                style_map: StyleMap::builtin(),
+                template: None,
+            },
+        )
+        .expect("DOCX write should succeed");
+        assert!(warnings.is_empty());
+
+        let mut archive = ZipArchive::new(
+            fs::File::open(&output_docx).expect("written docx should be readable as zip"),
+        )
+        .expect("written docx should be a valid zip");
+        let mut rels = String::new();
+        archive
+            .by_name("word/_rels/document.xml.rels")
+            .expect("document.xml.rels should exist")
+            .read_to_string(&mut rels)
+            .expect("document.xml.rels should be readable");
+
+        assert!(
+            rels.contains("relationships/styles"),
+            "document relationships should include the styles relationship type"
+        );
+        assert!(
+            rels.contains("Target=\"styles.xml\""),
+            "document relationships should target styles.xml"
         );
     }
 
