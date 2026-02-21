@@ -69,6 +69,7 @@ Last updated: 2026-02-21
 
 ## Phase 5: Short-Term Enhancements (`P1`)
 - [ ] Add batch conversion mode (`--glob` or directory input) while keeping single-file mode default.
+- [ ] Simplify CLI interface significantly. Take inspiration from great CLI apps like Codex
 - [ ] Add compatibility mode flags (for example, stricter markdown output for docs platforms).
 - [ ] Simplify CLI usage with config profiles and short command aliases so common permission-related flags/defaults (for example, remote image policy, strict mode, template/style-map paths) do not need to be repeated.
 - [ ] Improve style-map validation with actionable error diagnostics.
