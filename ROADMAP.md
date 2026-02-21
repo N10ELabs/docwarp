@@ -66,7 +66,7 @@ Last updated: 2026-02-21
   - [x] binary download
   - [x] Homebrew tap
 - [ ] Publish `v0.1.0` and changelog.
-sample
+- [ ] Sample release workflow.
 
 ## Phase 5: Short-Term Enhancements (`P1`)
 - [ ] Add batch conversion mode (`--glob` or directory input) while keeping single-file mode default.
