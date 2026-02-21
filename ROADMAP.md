@@ -39,32 +39,32 @@ Last updated: 2026-02-20
 - [x] Improve parse/write determinism (stable ordering where applicable).
 
 ## Phase 2: Fidelity and Edge Cases (`P0`)
-- [ ] Improve table handling for uneven rows and empty cells.
-- [ ] Improve list fidelity for mixed ordered/unordered transitions.
-- [ ] Improve inline formatting edge cases (nested emphasis/strong/code/link combinations).
-- [ ] Preserve/normalize hard and soft line breaks predictably.
-- [ ] Improve image handling:
-  - [ ] explicit behavior for absolute vs relative paths
-  - [ ] clearer remote image warning messages
-  - [ ] enforce offline-by-default in tests
-- [ ] Validate `.dotx` template integration with fallback behavior.
+- [x] Improve table handling for uneven rows and empty cells.
+- [x] Improve list fidelity for mixed ordered/unordered transitions.
+- [x] Improve inline formatting edge cases (nested emphasis/strong/code/link combinations).
+- [x] Preserve/normalize hard and soft line breaks predictably.
+- [x] Improve image handling:
+  - [x] explicit behavior for absolute vs relative paths
+  - [x] clearer remote image warning messages
+  - [x] enforce offline-by-default in tests
+- [x] Validate `.dotx` template integration with fallback behavior.
 
 ## Phase 3: CLI and Config UX (`P0`)
-- [ ] Expand `--help` examples for both commands.
-- [ ] Add config examples for `.instruct.yml` in docs.
-- [ ] Add style-map examples (YAML + JSON) in docs.
-- [ ] Add `--strict` behavior examples and CI integration guidance.
-- [ ] Add machine-readable report schema documentation.
+- [x] Expand `--help` examples for both commands.
+- [x] Add config examples for `.instruct.yml` in docs.
+- [x] Add style-map examples (YAML + JSON) in docs.
+- [x] Add `--strict` behavior examples and CI integration guidance.
+- [x] Add machine-readable report schema documentation.
 
 ## Phase 4: Release Readiness (`P0`)
-- [ ] Finalize project metadata:
-  - [ ] replace `OWNER` placeholders
-  - [ ] add Homebrew `sha256` values per artifact
+- [x] Finalize project metadata:
+  - [x] replace `OWNER` placeholders
+  - [x] add Homebrew `sha256` values per artifact
 - [ ] Validate GitHub Actions release workflow end-to-end on a prerelease tag.
-- [ ] Add smoke tests for published binaries on macOS/Linux/Windows.
-- [ ] Add install docs for:
-  - [ ] binary download
-  - [ ] Homebrew tap
+- [x] Add smoke tests for published binaries on macOS/Linux/Windows.
+- [x] Add install docs for:
+  - [x] binary download
+  - [x] Homebrew tap
 - [ ] Publish `v0.1.0` and changelog.
 
 ## Phase 5: Short-Term Enhancements (`P1`)
@@ -105,7 +105,7 @@ Last updated: 2026-02-20
 - [x] Add invalid-style-map integration test.
 - [x] Add invalid-template integration test.
 - [x] Add missing-media integration test.
-- [ ] Add docs for JSON report schema and sample output.
-- [ ] Finalize release workflow placeholders.
-- [ ] Draft `CHANGELOG.md` and release template.
+- [x] Add docs for JSON report schema and sample output.
+- [x] Finalize release workflow placeholders.
+- [x] Draft `CHANGELOG.md` and release template.
 - [ ] Create GitHub issues for all `P0` checkboxes.

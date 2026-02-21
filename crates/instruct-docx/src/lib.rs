@@ -353,6 +353,13 @@ fn render_table(
     state: &mut DocxBuildState,
     warnings: &mut Vec<ConversionWarning>,
 ) -> Result<String> {
+    let width = headers
+        .len()
+        .max(rows.iter().map(Vec::len).max().unwrap_or_default());
+    let mut normalized_headers = headers.to_vec();
+    let mut normalized_rows = rows.to_vec();
+    normalize_table_dimensions(&mut normalized_headers, &mut normalized_rows, width);
+
     let mut out = String::new();
     out.push_str("<w:tbl><w:tblPr>");
     out.push_str(&format!(
@@ -364,9 +371,9 @@ fn render_table(
     );
     out.push_str("</w:tblPr>");
 
-    if !headers.is_empty() {
+    if !normalized_headers.is_empty() {
         out.push_str("<w:tr>");
-        for cell in headers {
+        for cell in &normalized_headers {
             out.push_str("<w:tc><w:p>");
             out.push_str(&render_inlines(
                 cell,
@@ -380,7 +387,7 @@ fn render_table(
         out.push_str("</w:tr>");
     }
 
-    for row in rows {
+    for row in &normalized_rows {
         out.push_str("<w:tr>");
         for cell in row {
             out.push_str("<w:tc><w:p>");
@@ -609,7 +616,9 @@ fn load_image(
             warnings.push(
                 ConversionWarning::new(
                     WarningCode::RemoteImageBlocked,
-                    format!("Remote image blocked (use --allow-remote-images): {src}"),
+                    format!(
+                        "Remote image blocked by offline-by-default policy. Re-run with --allow-remote-images: {src}"
+                    ),
                 )
                 .with_location(src),
             );
@@ -654,14 +663,17 @@ fn load_image(
             }
         }
     } else {
-        let candidate = markdown_base_dir.join(src);
+        let (candidate, source_kind) = resolve_local_image_path(markdown_base_dir, src);
         match fs::read(&candidate) {
             Ok(data) => data,
             Err(err) => {
                 warnings.push(
                     ConversionWarning::new(
                         WarningCode::ImageLoadFailed,
-                        format!("Failed reading local image: {err}"),
+                        format!(
+                            "Failed reading {source_kind} local image '{src}' (resolved to '{}'): {err}",
+                            candidate.display()
+                        ),
                     )
                     .with_location(candidate.display().to_string()),
                 );
@@ -687,6 +699,15 @@ fn load_image(
         width_emu: 2_400_000,
         height_emu: 1_800_000,
     })
+}
+
+fn resolve_local_image_path(markdown_base_dir: &Path, src: &str) -> (PathBuf, &'static str) {
+    let candidate = PathBuf::from(src);
+    if candidate.is_absolute() {
+        (candidate, "absolute")
+    } else {
+        (markdown_base_dir.join(&candidate), "relative")
+    }
 }
 
 fn detect_image_type(src: &str, bytes: &[u8]) -> Option<(String, String)> {
@@ -1084,7 +1105,8 @@ pub fn read_docx(
                         if let Some(table) = table.take() {
                             let mut rows = table.rows;
                             if !rows.is_empty() {
-                                let headers = rows.remove(0);
+                                let mut headers = rows.remove(0);
+                                normalize_table_dimensions(&mut headers, &mut rows, 0);
                                 blocks.push(Block::Table { headers, rows });
                             }
                         }
@@ -1327,6 +1349,29 @@ fn normalize_docx_target(target: &str) -> String {
     replaced.trim_start_matches("../").to_string()
 }
 
+fn normalize_table_dimensions(
+    headers: &mut Vec<Vec<Inline>>,
+    rows: &mut [Vec<Vec<Inline>>],
+    forced_width: usize,
+) {
+    let width = if forced_width > 0 {
+        forced_width
+    } else {
+        headers
+            .len()
+            .max(rows.iter().map(Vec::len).max().unwrap_or_default())
+    };
+
+    if width == 0 {
+        return;
+    }
+
+    headers.resize_with(width, Vec::new);
+    for row in rows {
+        row.resize_with(width, Vec::new);
+    }
+}
+
 fn path_to_markdown_link(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
@@ -1445,5 +1490,224 @@ mod tests {
                 .iter()
                 .any(|warning| warning.code == WarningCode::RemoteImageBlocked)
         );
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.message.contains("offline-by-default")),
+            "remote-image warning should explain offline default policy"
+        );
+    }
+
+    #[test]
+    fn resolves_relative_image_paths_against_markdown_base_dir() {
+        let dir = tempdir().expect("tempdir should be created");
+        let nested = dir.path().join("assets");
+        fs::create_dir_all(&nested).expect("assets directory should be created");
+        let image_path = nested.join("tiny.png");
+        fs::write(&image_path, tiny_png()).expect("image should be written");
+
+        let mut warnings = Vec::new();
+        let loaded = load_image("assets/tiny.png", dir.path(), false, &mut warnings);
+        assert!(
+            loaded.is_some(),
+            "relative image should load from markdown base"
+        );
+        assert!(
+            warnings.is_empty(),
+            "loading relative image should not warn"
+        );
+    }
+
+    #[test]
+    fn loads_absolute_image_paths_without_base_joining() {
+        let dir = tempdir().expect("tempdir should be created");
+        let other_base = tempdir().expect("tempdir should be created");
+        let image_path = dir.path().join("tiny.png");
+        fs::write(&image_path, tiny_png()).expect("image should be written");
+
+        let mut warnings = Vec::new();
+        let loaded = load_image(
+            image_path.to_string_lossy().as_ref(),
+            other_base.path(),
+            false,
+            &mut warnings,
+        );
+        assert!(
+            loaded.is_some(),
+            "absolute image path should be read directly"
+        );
+        assert!(
+            warnings.is_empty(),
+            "loading absolute image should not warn"
+        );
+    }
+
+    #[test]
+    fn uses_dotx_template_styles_when_available() {
+        let dir = tempdir().expect("tempdir should be created");
+        let template_path = dir.path().join("custom.dotx");
+        let output_docx = dir.path().join("out.docx");
+
+        write_template_zip(
+            &template_path,
+            br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:style w:type="paragraph" w:styleId="Normal"><w:name w:val="Normal"/></w:style>
+  <w:style w:type="paragraph" w:styleId="BrandStyle"><w:name w:val="BrandStyle"/></w:style>
+</w:styles>"#,
+        )
+        .expect("template should be written");
+
+        let doc = Document {
+            blocks: vec![Block::Paragraph(vec![Inline::Text("Body".into())])],
+        };
+
+        let warnings = write_docx(
+            &doc,
+            dir.path(),
+            &output_docx,
+            &DocxWriteOptions {
+                allow_remote_images: false,
+                style_map: StyleMap::builtin(),
+                template: Some(template_path),
+            },
+        )
+        .expect("DOCX write should succeed");
+        assert!(warnings.is_empty(), "valid .dotx template should not warn");
+
+        let mut archive = ZipArchive::new(
+            fs::File::open(&output_docx).expect("written docx should be readable as zip"),
+        )
+        .expect("written docx should be a valid zip");
+        let mut styles = String::new();
+        archive
+            .by_name("word/styles.xml")
+            .expect("styles.xml should exist")
+            .read_to_string(&mut styles)
+            .expect("styles.xml should be readable");
+
+        assert!(
+            styles.contains("BrandStyle"),
+            "expected template styles to be copied into output DOCX"
+        );
+    }
+
+    #[test]
+    fn invalid_dotx_falls_back_to_builtin_styles_with_warning() {
+        let dir = tempdir().expect("tempdir should be created");
+        let template_path = dir.path().join("broken.dotx");
+        let output_docx = dir.path().join("out.docx");
+
+        write_invalid_template_zip(&template_path).expect("invalid template should be written");
+
+        let doc = Document {
+            blocks: vec![Block::Paragraph(vec![Inline::Text("Body".into())])],
+        };
+
+        let warnings = write_docx(
+            &doc,
+            dir.path(),
+            &output_docx,
+            &DocxWriteOptions {
+                allow_remote_images: false,
+                style_map: StyleMap::builtin(),
+                template: Some(template_path),
+            },
+        )
+        .expect("DOCX write should succeed with warning fallback");
+
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.code == WarningCode::InvalidTemplate),
+            "invalid .dotx should emit invalid_template warning"
+        );
+
+        let mut archive = ZipArchive::new(
+            fs::File::open(&output_docx).expect("written docx should be readable as zip"),
+        )
+        .expect("written docx should be a valid zip");
+        let mut styles = String::new();
+        archive
+            .by_name("word/styles.xml")
+            .expect("styles.xml should exist")
+            .read_to_string(&mut styles)
+            .expect("styles.xml should be readable");
+
+        assert!(
+            styles.contains("ListBullet"),
+            "fallback styles should include built-in style definitions"
+        );
+    }
+
+    #[test]
+    fn normalizes_uneven_table_rows_after_roundtrip() {
+        let dir = tempdir().expect("tempdir should be created");
+        let output_docx = dir.path().join("out.docx");
+
+        let doc = Document {
+            blocks: vec![Block::Table {
+                headers: vec![
+                    vec![Inline::Text("A".into())],
+                    vec![Inline::Text("B".into())],
+                ],
+                rows: vec![
+                    vec![vec![Inline::Text("1".into())]],
+                    vec![
+                        vec![Inline::Text("2".into())],
+                        vec![Inline::Text("3".into())],
+                        vec![Inline::Text("4".into())],
+                    ],
+                ],
+            }],
+        };
+
+        write_docx(
+            &doc,
+            dir.path(),
+            &output_docx,
+            &DocxWriteOptions {
+                allow_remote_images: false,
+                style_map: StyleMap::builtin(),
+                template: None,
+            },
+        )
+        .expect("DOCX write should succeed");
+
+        let (read_doc, warnings) = read_docx(
+            &output_docx,
+            &DocxReadOptions {
+                assets_dir: dir.path().join("assets"),
+                style_map: StyleMap::builtin(),
+            },
+        )
+        .expect("DOCX read should succeed");
+        assert!(warnings.is_empty());
+
+        let Some(Block::Table { headers, rows }) = read_doc.blocks.first() else {
+            panic!("expected first block to be a table");
+        };
+
+        assert_eq!(headers.len(), 3);
+        assert_eq!(rows[0].len(), 3);
+        assert_eq!(rows[1].len(), 3);
+    }
+
+    fn write_template_zip(path: &Path, styles_xml: &[u8]) -> Result<()> {
+        let file = fs::File::create(path)?;
+        let mut zip = ZipWriter::new(file);
+        zip.start_file("word/styles.xml", SimpleFileOptions::default())?;
+        zip.write_all(styles_xml)?;
+        zip.finish()?;
+        Ok(())
+    }
+
+    fn write_invalid_template_zip(path: &Path) -> Result<()> {
+        let file = fs::File::create(path)?;
+        let mut zip = ZipWriter::new(file);
+        zip.start_file("word/not-styles.xml", SimpleFileOptions::default())?;
+        zip.write_all(b"placeholder")?;
+        zip.finish()?;
+        Ok(())
     }
 }

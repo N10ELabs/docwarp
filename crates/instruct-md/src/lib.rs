@@ -45,6 +45,7 @@ enum InlineContext {
 struct ListContext {
     ordered: bool,
     items: Vec<Vec<Inline>>,
+    trailing_lists: Vec<Block>,
 }
 
 pub fn parse_markdown(input: &str) -> Result<(Document, Vec<ConversionWarning>)> {
@@ -91,6 +92,7 @@ pub fn parse_markdown(input: &str) -> Result<(Document, Vec<ConversionWarning>)>
                     list_stack.push(ListContext {
                         ordered: start.is_some(),
                         items: Vec::new(),
+                        trailing_lists: Vec::new(),
                     });
                 }
                 Tag::Item => {
@@ -199,10 +201,18 @@ pub fn parse_markdown(input: &str) -> Result<(Document, Vec<ConversionWarning>)>
                 }
                 TagEnd::List(_) => {
                     if let Some(list) = list_stack.pop() {
-                        blocks.push(Block::List {
+                        let list_block = Block::List {
                             ordered: list.ordered,
                             items: list.items,
-                        });
+                        };
+
+                        if let Some(parent) = list_stack.last_mut() {
+                            parent.trailing_lists.push(list_block);
+                            parent.trailing_lists.extend(list.trailing_lists);
+                        } else {
+                            blocks.push(list_block);
+                            blocks.extend(list.trailing_lists);
+                        }
                     }
                 }
                 TagEnd::CodeBlock => {
@@ -242,6 +252,7 @@ pub fn parse_markdown(input: &str) -> Result<(Document, Vec<ConversionWarning>)>
                         if headers.is_empty() && !rows.is_empty() {
                             headers = rows.remove(0);
                         }
+                        normalize_table_dimensions(&mut headers, &mut rows);
                         blocks.push(Block::Table { headers, rows });
                     }
                 }
@@ -382,13 +393,19 @@ pub fn render_markdown(document: &Document) -> String {
 }
 
 fn render_table(headers: &[Vec<Inline>], rows: &[Vec<Vec<Inline>>]) -> String {
-    if headers.is_empty() {
+    let width = headers
+        .len()
+        .max(rows.iter().map(Vec::len).max().unwrap_or_default());
+    if width == 0 {
         return String::new();
     }
 
+    let mut normalized_headers = headers.to_vec();
+    normalized_headers.resize_with(width, Vec::new);
+
     let mut out = String::new();
     out.push('|');
-    for header in headers {
+    for header in &normalized_headers {
         out.push(' ');
         out.push_str(&render_inlines(header));
         out.push(' ');
@@ -397,14 +414,16 @@ fn render_table(headers: &[Vec<Inline>], rows: &[Vec<Vec<Inline>>]) -> String {
     out.push('\n');
 
     out.push('|');
-    for _ in headers {
+    for _ in 0..width {
         out.push_str(" --- |");
     }
     out.push('\n');
 
     for row in rows {
+        let mut normalized_row = row.clone();
+        normalized_row.resize_with(width, Vec::new);
         out.push('|');
-        for cell in row {
+        for cell in &normalized_row {
             out.push(' ');
             out.push_str(&render_inlines(cell));
             out.push(' ');
@@ -421,11 +440,15 @@ fn render_inlines(inlines: &[Inline]) -> String {
     for inline in inlines {
         match inline {
             Inline::Text(text) => out.push_str(text),
-            Inline::Emphasis(children) => out.push_str(&format!("*{}*", render_inlines(children))),
-            Inline::Strong(children) => out.push_str(&format!("**{}**", render_inlines(children))),
-            Inline::Code(code) => out.push_str(&format!("`{code}`")),
+            Inline::Emphasis(children) => out.push_str(&render_emphasis(children)),
+            Inline::Strong(children) => out.push_str(&render_strong(children)),
+            Inline::Code(code) => out.push_str(&render_code_span(code)),
             Inline::Link { text, url } => {
-                out.push_str(&format!("[{}]({url})", render_inlines(text)));
+                out.push_str(&format!(
+                    "[{}]({})",
+                    render_inlines(text),
+                    render_link_destination(url)
+                ));
             }
             Inline::Image { alt, src, title } => {
                 if let Some(title) = title {
@@ -434,10 +457,59 @@ fn render_inlines(inlines: &[Inline]) -> String {
                     out.push_str(&format!("![{alt}]({src})"));
                 }
             }
-            Inline::LineBreak => out.push('\n'),
+            Inline::LineBreak => out.push_str("\\\n"),
         }
     }
     out
+}
+
+fn render_emphasis(children: &[Inline]) -> String {
+    let inner = render_inlines(children);
+    let delimiter = if inner.contains('*') && !inner.contains('_') {
+        "_"
+    } else {
+        "*"
+    };
+    format!("{delimiter}{inner}{delimiter}")
+}
+
+fn render_strong(children: &[Inline]) -> String {
+    let inner = render_inlines(children);
+    let delimiter = if inner.contains("**") && !inner.contains("__") {
+        "__"
+    } else {
+        "**"
+    };
+    format!("{delimiter}{inner}{delimiter}")
+}
+
+fn render_code_span(code: &str) -> String {
+    let mut max_backtick_run = 0;
+    let mut current_run = 0;
+    for ch in code.chars() {
+        if ch == '`' {
+            current_run += 1;
+            max_backtick_run = max_backtick_run.max(current_run);
+        } else {
+            current_run = 0;
+        }
+    }
+
+    let fence = "`".repeat(max_backtick_run + 1);
+    if code.starts_with('`') || code.ends_with('`') || code.starts_with(' ') || code.ends_with(' ')
+    {
+        format!("{fence} {code} {fence}")
+    } else {
+        format!("{fence}{code}{fence}")
+    }
+}
+
+fn render_link_destination(url: &str) -> String {
+    if url.contains([' ', '\t', '\n', '(', ')']) {
+        format!("<{}>", url.replace('>', "%3E"))
+    } else {
+        url.to_string()
+    }
 }
 
 fn heading_level_to_u8(level: HeadingLevel) -> u8 {
@@ -509,6 +581,21 @@ fn push_inline(
                 }
             },
         }
+    }
+}
+
+fn normalize_table_dimensions(headers: &mut Vec<Vec<Inline>>, rows: &mut [Vec<Vec<Inline>>]) {
+    let width = headers
+        .len()
+        .max(rows.iter().map(Vec::len).max().unwrap_or_default());
+
+    if width == 0 {
+        return;
+    }
+
+    headers.resize_with(width, Vec::new);
+    for row in rows {
+        row.resize_with(width, Vec::new);
     }
 }
 
@@ -587,5 +674,80 @@ Paragraph with **bold** and [link](https://example.com).
         assert!(output.contains("## Overview"));
         assert!(output.contains("1. one"));
         assert!(output.contains("```rust"));
+    }
+
+    #[test]
+    fn normalizes_table_columns_for_uneven_rows() {
+        let input = r#"
+| A | B | C |
+|---|---|---|
+| 1 |
+| 2 | 3 |
+"#;
+
+        let (doc, warnings) = parse_markdown(input).expect("parse should succeed");
+        assert!(warnings.is_empty());
+
+        let Some(Block::Table { headers, rows }) = doc.blocks.first() else {
+            panic!("expected first block to be a table");
+        };
+
+        assert_eq!(headers.len(), 3);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].len(), 3);
+        assert_eq!(rows[1].len(), 3);
+        assert!(rows[0][1].is_empty());
+        assert!(rows[0][2].is_empty());
+        assert!(rows[1][2].is_empty());
+    }
+
+    #[test]
+    fn preserves_list_type_transitions_in_order() {
+        let input = r#"1. one
+2. two
+
+- three
+- four
+
+1. five"#;
+
+        let (doc, _) = parse_markdown(input).expect("parse should succeed");
+        let list_kinds: Vec<bool> = doc
+            .blocks
+            .iter()
+            .filter_map(|block| {
+                if let Block::List { ordered, .. } = block {
+                    Some(*ordered)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        assert_eq!(list_kinds, vec![true, false, true]);
+    }
+
+    #[test]
+    fn renders_code_spans_with_backticks_safely() {
+        let document = Document {
+            blocks: vec![Block::Paragraph(vec![Inline::Code("a`b".into())])],
+        };
+
+        let output = render_markdown(&document);
+        assert_eq!(output.trim(), "``a`b``");
+    }
+
+    #[test]
+    fn line_breaks_render_as_hard_breaks() {
+        let document = Document {
+            blocks: vec![Block::Paragraph(vec![
+                Inline::Text("line 1".into()),
+                Inline::LineBreak,
+                Inline::Text("line 2".into()),
+            ])],
+        };
+
+        let output = render_markdown(&document);
+        assert_eq!(output.trim(), "line 1\\\nline 2");
     }
 }

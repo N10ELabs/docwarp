@@ -12,9 +12,40 @@ use instruct_core::{
 use instruct_docx::{DocxReadOptions, DocxWriteOptions, read_docx, write_docx};
 use instruct_md::{parse_markdown, render_markdown};
 
+const CLI_LONG_ABOUT: &str = "Convert documentation between Markdown and DOCX.\n\
+\n\
+The tool has two directional subcommands:\n\
+- md2docx: convert Markdown into DOCX\n\
+- docx2md: convert DOCX into Markdown";
+
+const CLI_AFTER_LONG_HELP: &str = "Examples:\n\
+  instruct md2docx ./docs/spec.md --output ./build/spec.docx\n\
+  instruct md2docx ./docs/spec.md --output ./build/spec.docx --strict --report ./build/report.json\n\
+  instruct docx2md ./contracts/master.docx --output ./contracts/master.md --assets-dir ./contracts/assets\n\
+\n\
+Run command-specific help for detailed examples:\n\
+  instruct md2docx --help\n\
+  instruct docx2md --help";
+
+const MD2DOCX_AFTER_LONG_HELP: &str = "Examples:\n\
+  instruct md2docx ./input.md --output ./output.docx\n\
+  instruct md2docx ./input.md --output ./output.docx --template ./brand.dotx --style-map ./style-map.yml\n\
+  instruct md2docx ./input.md --output ./output.docx --config ./.instruct.yml\n\
+  instruct md2docx ./input.md --output ./output.docx --report ./report.json --strict\n\
+  instruct md2docx ./input.md --output ./output.docx --allow-remote-images";
+
+const DOCX2MD_AFTER_LONG_HELP: &str = "Examples:\n\
+  instruct docx2md ./input.docx --output ./output.md\n\
+  instruct docx2md ./input.docx --output ./output.md --assets-dir ./output_assets\n\
+  instruct docx2md ./input.docx --output ./output.md --style-map ./style-map.json\n\
+  instruct docx2md ./input.docx --output ./output.md --config ./.instruct.yml --report ./report.json\n\
+  instruct docx2md ./input.docx --output ./output.md --strict";
+
 #[derive(Debug, Parser)]
 #[command(name = "instruct")]
 #[command(about = "Convert documentation between Markdown and DOCX")]
+#[command(long_about = CLI_LONG_ABOUT)]
+#[command(after_long_help = CLI_AFTER_LONG_HELP)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -23,6 +54,7 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Commands {
     /// Convert Markdown to DOCX
+    #[command(after_long_help = MD2DOCX_AFTER_LONG_HELP)]
     Md2docx {
         input: PathBuf,
         #[arg(short, long)]
@@ -41,6 +73,7 @@ enum Commands {
         allow_remote_images: bool,
     },
     /// Convert DOCX to Markdown
+    #[command(after_long_help = DOCX2MD_AFTER_LONG_HELP)]
     Docx2md {
         input: PathBuf,
         #[arg(short, long)]

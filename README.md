@@ -26,6 +26,24 @@ instruct md2docx <input.md> --output <output.docx> [--template <template.dotx>] 
 instruct docx2md <input.docx> --output <output.md> [--assets-dir <dir>] [--style-map <map.yml>] [--config <instruct.yml>] [--report <report.json>] [--strict]
 ```
 
+Run command-specific help for full examples:
+
+```bash
+instruct --help
+instruct md2docx --help
+instruct docx2md --help
+```
+
+## Docs
+
+- Install guide: `docs/install.md`
+- Configuration and style maps: `docs/configuration.md`
+- Strict mode and CI guidance: `docs/strict-mode.md`
+- JSON report schema: `docs/report-schema.md`
+- Warning code catalog: `docs/warnings.md`
+- Release runbook: `docs/release.md`
+- Changelog: `CHANGELOG.md`
+
 ## Warning Codes
 
 See `docs/warnings.md` for the stable warning-code catalog.
