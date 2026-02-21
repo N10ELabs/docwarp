@@ -65,7 +65,7 @@ Last updated: 2026-02-21
 - [x] Add install docs for:
   - [x] binary download
   - [x] Homebrew tap
-- [ ] Publish `v0.1.0` and changelog. tag `v0.1.0` and push to GitHub.
+- [ ] Publish `v0.1.0` and changelog.
 
 ## Phase 5: Short-Term Enhancements (`P1`)
 - [ ] Add batch conversion mode (`--glob` or directory input) while keeping single-file mode default.
