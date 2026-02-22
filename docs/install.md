@@ -37,12 +37,13 @@ Invoke-WebRequest `
 ## Homebrew Tap
 
 `docwarp` publishes a Homebrew formula as release asset `docwarp.rb` with release-specific checksums.
+Global `brew install docwarp` becomes available only after `homebrew/core` inclusion.
 
 Install via tap:
 
 ```bash
 brew tap N10ELabs/docwarp https://github.com/N10ELabs/docwarp
-brew install docwarp
+brew install n10elabs/docwarp/docwarp
 ```
 
 If you need to install from a specific release formula file:

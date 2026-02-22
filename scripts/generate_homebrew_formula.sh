@@ -18,6 +18,7 @@ cat >"$output_path" <<EOF
 class Docwarp < Formula
   desc "Bidirectional Markdown <-> DOCX converter"
   homepage "https://github.com/${owner}/${repo}"
+  license "Apache-2.0"
   version "${version}"
 
   on_macos do

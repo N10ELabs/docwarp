@@ -1,6 +1,7 @@
 class Docwarp < Formula
   desc "Bidirectional Markdown <-> DOCX converter"
   homepage "https://github.com/N10ELabs/docwarp"
+  license "Apache-2.0"
   version "0.1.0"
   # NOTE: Release workflow generates a checksummed formula per tag and
   # publishes it as release asset `docwarp.rb`.

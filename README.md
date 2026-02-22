@@ -56,6 +56,7 @@ docwarp docx2md --help
 - Strict mode and CI guidance: `docs/strict-mode.md`
 - JSON report schema: `docs/report-schema.md`
 - Warning code catalog: `docs/warnings.md`
+- Homebrew/core submission guide: `docs/homebrew-core.md`
 - Release runbook: `docs/release.md`
 - Changelog: `CHANGELOG.md`
 
