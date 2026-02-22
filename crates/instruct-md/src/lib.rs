@@ -10,6 +10,10 @@ enum BlockContext {
     Heading(u8, Vec<Inline>),
     BlockQuote(Vec<Inline>),
     Item(Vec<Inline>),
+    FootnoteDefinition {
+        label: String,
+        content: Vec<Inline>,
+    },
     CodeBlock {
         language: Option<String>,
         code: String,
@@ -30,6 +34,9 @@ struct TableContext {
 enum InlineContext {
     Emphasis(Vec<Inline>),
     Strong(Vec<Inline>),
+    Strikethrough(Vec<Inline>),
+    Superscript(Vec<Inline>),
+    Subscript(Vec<Inline>),
     Link {
         url: String,
         text: Vec<Inline>,
@@ -44,8 +51,13 @@ enum InlineContext {
 #[derive(Debug)]
 struct ListContext {
     ordered: bool,
+    depth: u8,
     items: Vec<Vec<Inline>>,
-    trailing_lists: Vec<Block>,
+    levels: Vec<u8>,
+    item_ordered: Vec<bool>,
+    pending_nested_items: Vec<Vec<Inline>>,
+    pending_nested_levels: Vec<u8>,
+    pending_nested_ordered: Vec<bool>,
 }
 
 pub fn parse_markdown(input: &str) -> Result<(Document, Vec<ConversionWarning>)> {
@@ -67,8 +79,16 @@ pub fn parse_markdown(input: &str) -> Result<(Document, Vec<ConversionWarning>)>
         match event {
             Event::Start(tag) => match tag {
                 Tag::Paragraph => {
-                    if !matches!(block_stack.last(), Some(BlockContext::BlockQuote(_)))
-                        && !matches!(block_stack.last(), Some(BlockContext::Item(_)))
+                    if let Some(BlockContext::BlockQuote(content)) = block_stack.last_mut() {
+                        if !content.is_empty() {
+                            content.push(Inline::LineBreak);
+                            content.push(Inline::LineBreak);
+                        }
+                    } else if !matches!(block_stack.last(), Some(BlockContext::Item(_)))
+                        && !matches!(
+                            block_stack.last(),
+                            Some(BlockContext::FootnoteDefinition { .. })
+                        )
                     {
                         block_stack.push(BlockContext::Paragraph(Vec::new()));
                     }
@@ -83,20 +103,26 @@ pub fn parse_markdown(input: &str) -> Result<(Document, Vec<ConversionWarning>)>
                     block_stack.push(BlockContext::BlockQuote(Vec::new()));
                 }
                 Tag::List(start) => {
-                    if !list_stack.is_empty() {
-                        warnings.push(ConversionWarning::new(
-                            WarningCode::NestedStructureSimplified,
-                            "Nested lists are flattened in Markdown parsing",
-                        ));
-                    }
+                    let depth = u8::try_from(list_stack.len()).unwrap_or(u8::MAX);
                     list_stack.push(ListContext {
                         ordered: start.is_some(),
+                        depth,
                         items: Vec::new(),
-                        trailing_lists: Vec::new(),
+                        levels: Vec::new(),
+                        item_ordered: Vec::new(),
+                        pending_nested_items: Vec::new(),
+                        pending_nested_levels: Vec::new(),
+                        pending_nested_ordered: Vec::new(),
                     });
                 }
                 Tag::Item => {
                     block_stack.push(BlockContext::Item(Vec::new()));
+                }
+                Tag::FootnoteDefinition(label) => {
+                    block_stack.push(BlockContext::FootnoteDefinition {
+                        label: label.to_string(),
+                        content: Vec::new(),
+                    });
                 }
                 Tag::CodeBlock(kind) => {
                     let language = match kind {
@@ -114,6 +140,29 @@ pub fn parse_markdown(input: &str) -> Result<(Document, Vec<ConversionWarning>)>
                         language,
                         code: String::new(),
                     });
+                }
+                Tag::HtmlBlock => {
+                    if !matches!(block_stack.last(), Some(BlockContext::BlockQuote(_)))
+                        && !matches!(block_stack.last(), Some(BlockContext::Item(_)))
+                        && !matches!(
+                            block_stack.last(),
+                            Some(BlockContext::FootnoteDefinition { .. })
+                        )
+                    {
+                        block_stack.push(BlockContext::Paragraph(Vec::new()));
+                    }
+                }
+                Tag::DefinitionList => {}
+                Tag::DefinitionListTitle | Tag::DefinitionListDefinition => {
+                    if !matches!(block_stack.last(), Some(BlockContext::BlockQuote(_)))
+                        && !matches!(block_stack.last(), Some(BlockContext::Item(_)))
+                        && !matches!(
+                            block_stack.last(),
+                            Some(BlockContext::FootnoteDefinition { .. })
+                        )
+                    {
+                        block_stack.push(BlockContext::Paragraph(Vec::new()));
+                    }
                 }
                 Tag::Table(_) => {
                     block_stack.push(BlockContext::Table(TableContext {
@@ -141,6 +190,9 @@ pub fn parse_markdown(input: &str) -> Result<(Document, Vec<ConversionWarning>)>
                 }
                 Tag::Emphasis => inline_stack.push(InlineContext::Emphasis(Vec::new())),
                 Tag::Strong => inline_stack.push(InlineContext::Strong(Vec::new())),
+                Tag::Strikethrough => inline_stack.push(InlineContext::Strikethrough(Vec::new())),
+                Tag::Superscript => inline_stack.push(InlineContext::Superscript(Vec::new())),
+                Tag::Subscript => inline_stack.push(InlineContext::Subscript(Vec::new())),
                 Tag::Link { dest_url, .. } => inline_stack.push(InlineContext::Link {
                     url: dest_url.to_string(),
                     text: Vec::new(),
@@ -180,11 +232,7 @@ pub fn parse_markdown(input: &str) -> Result<(Document, Vec<ConversionWarning>)>
                         pop_context(&mut block_stack)
                     {
                         let level = level.clamp(1, 6);
-                        if level == 1 && blocks.is_empty() {
-                            blocks.push(Block::Title(content));
-                        } else {
-                            blocks.push(Block::Heading { level, content });
-                        }
+                        blocks.push(Block::Heading { level, content });
                     }
                 }
                 TagEnd::BlockQuote(_) => {
@@ -196,6 +244,11 @@ pub fn parse_markdown(input: &str) -> Result<(Document, Vec<ConversionWarning>)>
                     if let Some(BlockContext::Item(content)) = pop_context(&mut block_stack) {
                         if let Some(list) = list_stack.last_mut() {
                             list.items.push(content);
+                            list.levels.push(list.depth);
+                            list.item_ordered.push(list.ordered);
+                            list.items.append(&mut list.pending_nested_items);
+                            list.levels.append(&mut list.pending_nested_levels);
+                            list.item_ordered.append(&mut list.pending_nested_ordered);
                         }
                     }
                 }
@@ -204,15 +257,34 @@ pub fn parse_markdown(input: &str) -> Result<(Document, Vec<ConversionWarning>)>
                         let list_block = Block::List {
                             ordered: list.ordered,
                             items: list.items,
+                            levels: list.levels,
+                            item_ordered: list.item_ordered,
                         };
 
                         if let Some(parent) = list_stack.last_mut() {
-                            parent.trailing_lists.push(list_block);
-                            parent.trailing_lists.extend(list.trailing_lists);
+                            if let Block::List {
+                                items,
+                                levels,
+                                item_ordered,
+                                ..
+                            } = list_block
+                            {
+                                parent.pending_nested_items.extend(items);
+                                parent.pending_nested_levels.extend(levels);
+                                parent.pending_nested_ordered.extend(item_ordered);
+                            }
                         } else {
                             blocks.push(list_block);
-                            blocks.extend(list.trailing_lists);
                         }
+                    }
+                }
+                TagEnd::FootnoteDefinition => {
+                    if let Some(BlockContext::FootnoteDefinition { label, content }) =
+                        pop_context(&mut block_stack)
+                    {
+                        let mut rendered = vec![Inline::Text(format!("[^{label}]: "))];
+                        rendered.extend(content);
+                        blocks.push(Block::Paragraph(rendered));
                     }
                 }
                 TagEnd::CodeBlock => {
@@ -220,6 +292,29 @@ pub fn parse_markdown(input: &str) -> Result<(Document, Vec<ConversionWarning>)>
                         pop_context(&mut block_stack)
                     {
                         blocks.push(Block::CodeBlock { language, code });
+                    }
+                }
+                TagEnd::HtmlBlock => {
+                    if matches!(block_stack.last(), Some(BlockContext::Paragraph(_))) {
+                        if let Some(BlockContext::Paragraph(content)) =
+                            pop_context(&mut block_stack)
+                        {
+                            if !content.is_empty() {
+                                blocks.push(Block::Paragraph(content));
+                            }
+                        }
+                    }
+                }
+                TagEnd::DefinitionList => {}
+                TagEnd::DefinitionListTitle | TagEnd::DefinitionListDefinition => {
+                    if matches!(block_stack.last(), Some(BlockContext::Paragraph(_))) {
+                        if let Some(BlockContext::Paragraph(content)) =
+                            pop_context(&mut block_stack)
+                        {
+                            if !content.is_empty() {
+                                blocks.push(Block::Paragraph(content));
+                            }
+                        }
                     }
                 }
                 TagEnd::TableHead => {
@@ -258,6 +353,9 @@ pub fn parse_markdown(input: &str) -> Result<(Document, Vec<ConversionWarning>)>
                 }
                 TagEnd::Emphasis => close_inline_context(&mut inline_stack, &mut block_stack),
                 TagEnd::Strong => close_inline_context(&mut inline_stack, &mut block_stack),
+                TagEnd::Strikethrough => close_inline_context(&mut inline_stack, &mut block_stack),
+                TagEnd::Superscript => close_inline_context(&mut inline_stack, &mut block_stack),
+                TagEnd::Subscript => close_inline_context(&mut inline_stack, &mut block_stack),
                 TagEnd::Link => close_inline_context(&mut inline_stack, &mut block_stack),
                 TagEnd::Image => close_inline_context(&mut inline_stack, &mut block_stack),
                 _ => {}
@@ -280,6 +378,20 @@ pub fn parse_markdown(input: &str) -> Result<(Document, Vec<ConversionWarning>)>
                     &mut block_stack,
                 );
             }
+            Event::InlineMath(math) => {
+                push_inline(
+                    Inline::Text(format!("${math}$")),
+                    &mut inline_stack,
+                    &mut block_stack,
+                );
+            }
+            Event::DisplayMath(math) => {
+                push_inline(
+                    Inline::Text(format!("$$\n{math}\n$$")),
+                    &mut inline_stack,
+                    &mut block_stack,
+                );
+            }
             Event::SoftBreak | Event::HardBreak => {
                 push_inline(Inline::LineBreak, &mut inline_stack, &mut block_stack);
             }
@@ -292,22 +404,26 @@ pub fn parse_markdown(input: &str) -> Result<(Document, Vec<ConversionWarning>)>
                     &mut block_stack,
                 );
             }
+            Event::FootnoteReference(label) => {
+                push_inline(
+                    Inline::Text(format!("[^{label}]")),
+                    &mut inline_stack,
+                    &mut block_stack,
+                );
+            }
             Event::Html(raw) => {
-                warnings.push(ConversionWarning::new(
-                    WarningCode::UnsupportedFeature,
-                    "Raw HTML is preserved as text",
-                ));
                 push_inline(
                     Inline::Text(raw.to_string()),
                     &mut inline_stack,
                     &mut block_stack,
                 );
             }
-            _ => {
-                warnings.push(ConversionWarning::new(
-                    WarningCode::UnsupportedFeature,
-                    "Encountered unsupported markdown event",
-                ));
+            Event::InlineHtml(raw) => {
+                push_inline(
+                    Inline::Text(raw.to_string()),
+                    &mut inline_stack,
+                    &mut block_stack,
+                );
             }
         }
     }
@@ -354,9 +470,15 @@ pub fn render_markdown(document: &Document) -> String {
             }
             Block::Paragraph(content) => render_inlines(content),
             Block::BlockQuote(content) => {
-                let text = render_inlines(content);
+                let text = render_inlines_for_blockquote(content);
                 text.lines()
-                    .map(|line| format!("> {line}"))
+                    .map(|line| {
+                        if line.is_empty() {
+                            ">".to_string()
+                        } else {
+                            format!("> {line}")
+                        }
+                    })
                     .collect::<Vec<_>>()
                     .join("\n")
             }
@@ -364,18 +486,12 @@ pub fn render_markdown(document: &Document) -> String {
                 let lang = language.clone().unwrap_or_default();
                 format!("```{lang}\n{code}\n```")
             }
-            Block::List { ordered, items } => items
-                .iter()
-                .enumerate()
-                .map(|(idx, item)| {
-                    if *ordered {
-                        format!("{}. {}", idx + 1, render_inlines(item))
-                    } else {
-                        format!("- {}", render_inlines(item))
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n"),
+            Block::List {
+                ordered,
+                items,
+                levels,
+                item_ordered,
+            } => render_list(items, levels, item_ordered, *ordered),
             Block::Table { headers, rows } => render_table(headers, rows),
             Block::Image { alt, src, title } => {
                 if let Some(title) = title {
@@ -433,6 +549,78 @@ fn render_table(headers: &[Vec<Inline>], rows: &[Vec<Vec<Inline>>]) -> String {
     }
 
     out.trim_end().to_string()
+}
+
+fn render_list(
+    items: &[Vec<Inline>],
+    levels: &[u8],
+    item_ordered: &[bool],
+    default_ordered: bool,
+) -> String {
+    let mut out = Vec::with_capacity(items.len());
+    let mut counters: Vec<usize> = Vec::new();
+    let mut modes: Vec<Option<bool>> = Vec::new();
+
+    for (idx, item) in items.iter().enumerate() {
+        let level = usize::from(*levels.get(idx).unwrap_or(&0));
+        let ordered = *item_ordered.get(idx).unwrap_or(&default_ordered);
+
+        if counters.len() <= level {
+            counters.resize(level + 1, 0);
+            modes.resize(level + 1, None);
+        }
+        counters.truncate(level + 1);
+        modes.truncate(level + 1);
+
+        if modes[level] != Some(ordered) {
+            counters[level] = 0;
+            modes[level] = Some(ordered);
+        }
+
+        let marker = if ordered {
+            counters[level] += 1;
+            format!("{}. ", counters[level])
+        } else {
+            "- ".to_string()
+        };
+
+        out.push(format!(
+            "{}{}{}",
+            "  ".repeat(level),
+            marker,
+            render_inlines(item)
+        ));
+    }
+
+    out.join("\n")
+}
+
+fn render_inlines_for_blockquote(inlines: &[Inline]) -> String {
+    let mut out = String::new();
+    for inline in inlines {
+        match inline {
+            Inline::Text(text) => out.push_str(text),
+            Inline::Emphasis(children) => out.push_str(&render_emphasis(children)),
+            Inline::Strong(children) => out.push_str(&render_strong(children)),
+            Inline::Code(code) => out.push_str(&render_code_span(code)),
+            Inline::Link { text, url } => {
+                out.push_str(&format!(
+                    "[{}]({})",
+                    render_inlines_for_blockquote(text),
+                    render_link_destination(url)
+                ));
+            }
+            Inline::Image { alt, src, title } => {
+                if let Some(title) = title {
+                    out.push_str(&format!("![{alt}]({src} \"{title}\")"));
+                } else {
+                    out.push_str(&format!("![{alt}]({src})"));
+                }
+            }
+            Inline::LineBreak => out.push('\n'),
+        }
+    }
+    out
 }
 
 fn render_inlines(inlines: &[Inline]) -> String {
@@ -538,6 +726,15 @@ fn close_inline_context(
     let inline = match context {
         InlineContext::Emphasis(children) => Inline::Emphasis(children),
         InlineContext::Strong(children) => Inline::Strong(children),
+        InlineContext::Strikethrough(children) => {
+            Inline::Text(format!("~~{}~~", render_inlines(&children)))
+        }
+        InlineContext::Superscript(children) => {
+            Inline::Text(format!("^{}^", render_inlines(&children)))
+        }
+        InlineContext::Subscript(children) => {
+            Inline::Text(format!("~{}~", render_inlines(&children)))
+        }
         InlineContext::Link { url, text } => Inline::Link { text, url },
         InlineContext::Image { src, title, alt } => Inline::Image {
             alt: inline_text(&alt),
@@ -558,6 +755,9 @@ fn push_inline(
         match context {
             InlineContext::Emphasis(children)
             | InlineContext::Strong(children)
+            | InlineContext::Strikethrough(children)
+            | InlineContext::Superscript(children)
+            | InlineContext::Subscript(children)
             | InlineContext::Link { text: children, .. }
             | InlineContext::Image { alt: children, .. } => {
                 children.push(inline);
@@ -571,6 +771,7 @@ fn push_inline(
             BlockContext::Paragraph(content)
             | BlockContext::Heading(_, content)
             | BlockContext::BlockQuote(content)
+            | BlockContext::FootnoteDefinition { content, label: _ }
             | BlockContext::Item(content) => content.push(inline),
             BlockContext::Table(table) => table.current_cell.push(inline),
             BlockContext::CodeBlock { code, .. } => match inline {
@@ -624,7 +825,10 @@ Paragraph with **bold** and [link](https://example.com).
         let (doc, warnings) = parse_markdown(input).expect("parse should succeed");
 
         assert!(warnings.is_empty());
-        assert!(matches!(doc.blocks.first(), Some(Block::Title(_))));
+        assert!(matches!(
+            doc.blocks.first(),
+            Some(Block::Heading { level: 1, .. })
+        ));
         assert!(
             doc.blocks
                 .iter()
@@ -661,6 +865,8 @@ Paragraph with **bold** and [link](https://example.com).
                         vec![Inline::Text("one".into())],
                         vec![Inline::Text("two".into())],
                     ],
+                    levels: Vec::new(),
+                    item_ordered: Vec::new(),
                 },
                 Block::CodeBlock {
                     language: Some("rust".into()),
@@ -749,5 +955,19 @@ Paragraph with **bold** and [link](https://example.com).
 
         let output = render_markdown(&document);
         assert_eq!(output.trim(), "line 1\\\nline 2");
+    }
+
+    #[test]
+    fn blockquote_paragraph_breaks_are_preserved() {
+        let input = r#"> First paragraph.
+>
+> Second paragraph."#;
+
+        let (document, warnings) = parse_markdown(input).expect("parse should succeed");
+        assert!(warnings.is_empty());
+
+        let output = render_markdown(&document);
+        assert!(output.contains("> First paragraph."));
+        assert!(output.contains(">\n> Second paragraph."));
     }
 }

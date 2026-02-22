@@ -190,7 +190,21 @@ fn normalize_document(document: &mut Document) {
                 }
             }
             Block::Image { src, .. } => normalize_image_path(src),
-            Block::CodeBlock { .. } | Block::ThematicBreak => {}
+            Block::CodeBlock { language, .. } => {
+                *language = None;
+            }
+            Block::ThematicBreak => {}
+        }
+    }
+
+    // Normalize legacy Title style to Heading 1 for fixture compatibility.
+    for block in &mut document.blocks {
+        let content = match block {
+            Block::Title(inlines) => Some(inlines.clone()),
+            _ => None,
+        };
+        if let Some(content) = content {
+            *block = Block::Heading { level: 1, content };
         }
     }
 }

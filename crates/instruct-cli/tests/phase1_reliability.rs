@@ -149,9 +149,9 @@ fn roundtrip_docx_md_docx_preserves_structure() -> Result<()> {
 #[test]
 fn strict_mode_returns_exit_code_2_on_warnings() -> Result<()> {
     let temp = tempdir().context("tempdir should be created")?;
-    let input = temp.path().join("unsupported.md");
+    let input = temp.path().join("remote-image.md");
     let output = temp.path().join("out.docx");
-    fs::write(&input, "<span>unsupported html</span>\n")
+    fs::write(&input, "![Remote](https://example.com/image.png)\n")
         .context("failed writing markdown input")?;
 
     let run = run_instruct([
@@ -164,8 +164,8 @@ fn strict_mode_returns_exit_code_2_on_warnings() -> Result<()> {
 
     assert_command_status(&run, Some(2), "strict mode warning exit")?;
     assert!(
-        stdout_text(&run).contains("[unsupported_feature]"),
-        "expected unsupported_feature warning, got:\n{}",
+        stdout_text(&run).contains("[remote_image_blocked]"),
+        "expected remote_image_blocked warning, got:\n{}",
         stdout_text(&run)
     );
 
@@ -401,6 +401,17 @@ fn normalize_document_semantics(document: &mut Document) {
                 *language = None;
             }
             Block::ThematicBreak => {}
+        }
+    }
+
+    // Treat legacy Word Title style as semantic Heading 1.
+    for block in &mut document.blocks {
+        let content = match block {
+            Block::Title(inlines) => Some(inlines.clone()),
+            _ => None,
+        };
+        if let Some(content) = content {
+            *block = Block::Heading { level: 1, content };
         }
     }
 }

@@ -195,6 +195,7 @@ enum NativePickerOutcome {
 struct GuidedOptions {
     template: Option<PathBuf>,
     profile: Option<String>,
+    allow_remote_images: bool,
 }
 
 impl GuidedDirection {
@@ -239,7 +240,7 @@ fn run_guided_mode() -> Result<i32> {
             None,
             None,
             false,
-            false,
+            options.allow_remote_images,
         ),
         GuidedDirection::DocxToMd => {
             run_docx2md(input, output, None, None, None, None, None, false)
@@ -290,12 +291,21 @@ fn open_guided_options_menu(options: &mut GuidedOptions) -> Result<()> {
             options.profile.as_deref().unwrap_or("default"),
             " (not yet applied)"
         );
+        println!(
+            "3) remote images: {}",
+            if options.allow_remote_images {
+                "allowed"
+            } else {
+                "blocked (default)"
+            }
+        );
         println!("q) back");
 
         let selection = prompt_line("Select option: ")?;
         match selection.trim() {
             "1" => configure_template_option(options)?,
             "2" => configure_profile_option(options)?,
+            "3" => configure_remote_image_option(options),
             "q" | "Q" => break,
             _ => eprintln!("invalid selection: {}", selection.trim()),
         }
@@ -363,6 +373,18 @@ fn configure_profile_option(options: &mut GuidedOptions) -> Result<()> {
     options.profile = Some(normalized.to_string());
     println!("profile set: {normalized} (not yet applied)");
     Ok(())
+}
+
+fn configure_remote_image_option(options: &mut GuidedOptions) {
+    options.allow_remote_images = !options.allow_remote_images;
+    println!(
+        "remote images {}",
+        if options.allow_remote_images {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
 }
 
 fn validate_template_path(path: &Path) -> Result<()> {

@@ -18,6 +18,10 @@ use zip::write::SimpleFileOptions;
 const OFFICE_REL_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const PACKAGE_REL_NS: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
 const CONTENT_TYPES_NS: &str = "http://schemas.openxmlformats.org/package/2006/content-types";
+const LIST_BASE_INDENT_TWIPS: u32 = 720;
+const LIST_INDENT_STEP_TWIPS: u32 = 360;
+const CODE_LANG_MARKER_PREFIX: &str = "[[instruct-code-lang:";
+const CODE_LANG_MARKER_SUFFIX: &str = "]]";
 
 #[derive(Debug, Clone)]
 pub struct DocxWriteOptions {
@@ -154,6 +158,7 @@ struct RunStyle {
 #[derive(Default)]
 struct ParseParagraph {
     style: Option<String>,
+    indent_left: Option<u32>,
     inlines: Vec<Inline>,
 }
 
@@ -162,6 +167,15 @@ struct ParseTable {
     rows: Vec<Vec<Vec<Inline>>>,
     current_row: Vec<Vec<Inline>>,
     current_cell: Vec<Inline>,
+}
+
+#[derive(Default)]
+struct PendingList {
+    ordered: bool,
+    base_indent_left: Option<u32>,
+    items: Vec<Vec<Inline>>,
+    levels: Vec<u8>,
+    item_ordered: Vec<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -278,6 +292,8 @@ fn build_document_xml(
                     &options.style_map.docx_style_for("title"),
                     if block_index > 0 { Some(240) } else { None },
                     Some(240),
+                    None,
+                    None,
                     markdown_base_dir,
                     options,
                     state,
@@ -299,6 +315,8 @@ fn build_document_xml(
                     &options.style_map.docx_style_for(token),
                     if block_index > 0 { Some(240) } else { None },
                     Some(240),
+                    None,
+                    None,
                     markdown_base_dir,
                     options,
                     state,
@@ -311,6 +329,8 @@ fn build_document_xml(
                     &options.style_map.docx_style_for("paragraph"),
                     None,
                     Some(240),
+                    None,
+                    None,
                     markdown_base_dir,
                     options,
                     state,
@@ -323,13 +343,15 @@ fn build_document_xml(
                     &options.style_map.docx_style_for("quote"),
                     None,
                     None,
+                    None,
+                    None,
                     markdown_base_dir,
                     options,
                     state,
                     warnings,
                 )?);
             }
-            Block::CodeBlock { code, .. } => {
+            Block::CodeBlock { language, code } => {
                 let mut code_inlines = Vec::new();
                 for (idx, line) in code.lines().enumerate() {
                     if idx > 0 {
@@ -346,24 +368,37 @@ fn build_document_xml(
                     &options.style_map.docx_style_for("code"),
                     None,
                     None,
+                    None,
+                    language.as_deref(),
                     markdown_base_dir,
                     options,
                     state,
                     warnings,
                 )?);
             }
-            Block::List { ordered, items } => {
-                let style = if *ordered {
-                    options.style_map.docx_style_for("list_number")
-                } else {
-                    options.style_map.docx_style_for("list_bullet")
-                };
+            Block::List {
+                ordered,
+                items,
+                levels,
+                item_ordered,
+            } => {
+                for (index, item) in items.iter().enumerate() {
+                    let is_ordered = *item_ordered.get(index).unwrap_or(ordered);
+                    let style = if is_ordered {
+                        options.style_map.docx_style_for("list_number")
+                    } else {
+                        options.style_map.docx_style_for("list_bullet")
+                    };
+                    let level = u32::from(*levels.get(index).unwrap_or(&0));
+                    let indent_left = LIST_BASE_INDENT_TWIPS
+                        .saturating_add(level.saturating_mul(LIST_INDENT_STEP_TWIPS));
 
-                for item in items {
                     body.push_str(&render_paragraph(
                         item,
                         &style,
                         None,
+                        None,
+                        Some(indent_left),
                         None,
                         markdown_base_dir,
                         options,
@@ -394,6 +429,8 @@ fn build_document_xml(
                     &options.style_map.docx_style_for("paragraph"),
                     None,
                     Some(240),
+                    None,
+                    None,
                     markdown_base_dir,
                     options,
                     state,
@@ -404,6 +441,8 @@ fn build_document_xml(
                 body.push_str(&render_paragraph(
                     &[Inline::Text("---".to_string())],
                     &options.style_map.docx_style_for("paragraph"),
+                    None,
+                    None,
                     None,
                     None,
                     markdown_base_dir,
@@ -499,6 +538,8 @@ fn render_paragraph(
     style: &str,
     spacing_before_twips: Option<u32>,
     spacing_after_twips: Option<u32>,
+    indent_left_twips: Option<u32>,
+    code_language: Option<&str>,
     markdown_base_dir: &Path,
     options: &DocxWriteOptions,
     state: &mut DocxBuildState,
@@ -518,7 +559,15 @@ fn render_paragraph(
         spacing.push_str("/>");
         out.push_str(&spacing);
     }
+    if let Some(indent_left) = indent_left_twips {
+        out.push_str(&format!(
+            "<w:ind w:left=\"{indent_left}\" w:hanging=\"360\"/>"
+        ));
+    }
     out.push_str("</w:pPr>");
+    if let Some(language) = code_language.filter(|value| !value.trim().is_empty()) {
+        out.push_str(&render_hidden_code_language_marker(language.trim()));
+    }
     out.push_str(&render_inlines(
         inlines,
         markdown_base_dir,
@@ -674,6 +723,14 @@ fn render_text_run(text: &str, style: &RunStyle) -> String {
     ));
     run.push_str("</w:r>");
     run
+}
+
+fn render_hidden_code_language_marker(language: &str) -> String {
+    let marker = format!("{CODE_LANG_MARKER_PREFIX}{language}{CODE_LANG_MARKER_SUFFIX}");
+    format!(
+        "<w:r><w:rPr><w:vanish/></w:rPr><w:t xml:space=\"preserve\">{}</w:t></w:r>",
+        escape_xml(&marker)
+    )
 }
 
 fn render_image_run(
@@ -1159,7 +1216,7 @@ pub fn read_docx(
     let mut table: Option<ParseTable> = None;
     let mut run_style = RunStyle::default();
     let mut current_hyperlink: Option<(String, Vec<Inline>)> = None;
-    let mut pending_list: Option<(bool, Vec<Vec<Inline>>)> = None;
+    let mut pending_list: Option<PendingList> = None;
     let mut in_text_node = false;
 
     let mut reader = Reader::from_str(&document_xml);
@@ -1178,6 +1235,13 @@ pub fn read_docx(
                             if let Some(paragraph) = paragraph.as_mut() {
                                 paragraph.style = Some(value);
                             }
+                        }
+                    }
+                    b"ind" => {
+                        if let Some(paragraph) = paragraph.as_mut() {
+                            let raw = attr_value(&start, b"left")
+                                .or_else(|| attr_value(&start, b"start"));
+                            paragraph.indent_left = raw.and_then(|value| parse_twips_value(&value));
                         }
                     }
                     b"r" => run_style = RunStyle::default(),
@@ -1248,6 +1312,13 @@ pub fn read_docx(
                             if let Some(paragraph) = paragraph.as_mut() {
                                 paragraph.style = Some(value);
                             }
+                        }
+                    }
+                    b"ind" => {
+                        if let Some(paragraph) = paragraph.as_mut() {
+                            let raw = attr_value(&start, b"left")
+                                .or_else(|| attr_value(&start, b"start"));
+                            paragraph.indent_left = raw.and_then(|value| parse_twips_value(&value));
                         }
                     }
                     b"b" => run_style.bold = true,
@@ -1474,30 +1545,62 @@ fn extract_image_assets<R: Read + std::io::Seek>(
 fn classify_paragraph(
     paragraph: ParseParagraph,
     style_map: &StyleMap,
-    pending_list: &mut Option<(bool, Vec<Vec<Inline>>)>,
+    pending_list: &mut Option<PendingList>,
     blocks: &mut Vec<Block>,
 ) {
-    let style = paragraph.style.unwrap_or_else(|| "Normal".to_string());
+    let ParseParagraph {
+        style,
+        indent_left,
+        inlines,
+    } = paragraph;
+    let style = style.unwrap_or_else(|| "Normal".to_string());
     let token = style_map.md_token_for(&style);
 
     match token.as_str() {
         "list_bullet" | "list_number" => {
             let ordered = token == "list_number";
-            if let Some((existing_ordered, items)) = pending_list.as_mut() {
-                if *existing_ordered == ordered {
-                    items.push(paragraph.inlines);
+            if let Some(list) = pending_list.as_mut() {
+                if list.base_indent_left.is_none() {
+                    list.base_indent_left = indent_left;
+                }
+                let base_indent = list.base_indent_left.unwrap_or(LIST_BASE_INDENT_TWIPS);
+                let item_indent = indent_left.unwrap_or(base_indent);
+                let level = list_level_from_indent(item_indent, base_indent);
+                let prev_level = list.levels.last().copied().unwrap_or(0);
+                let prev_ordered = list.item_ordered.last().copied().unwrap_or(list.ordered);
+
+                // Preserve top-level ordered/unordered list transitions as separate list blocks.
+                if ordered != prev_ordered && level == 0 && prev_level == 0 {
+                    flush_pending_list(pending_list, blocks);
+                    *pending_list = Some(PendingList {
+                        ordered,
+                        base_indent_left: indent_left,
+                        items: vec![inlines],
+                        levels: vec![0],
+                        item_ordered: vec![ordered],
+                    });
                     return;
                 }
+
+                list.items.push(inlines);
+                list.levels.push(level);
+                list.item_ordered.push(ordered);
+                return;
             }
 
-            flush_pending_list(pending_list, blocks);
-            *pending_list = Some((ordered, vec![paragraph.inlines]));
+            *pending_list = Some(PendingList {
+                ordered,
+                base_indent_left: indent_left,
+                items: vec![inlines],
+                levels: vec![0],
+                item_ordered: vec![ordered],
+            });
         }
         _ => {
             flush_pending_list(pending_list, blocks);
 
-            if paragraph.inlines.len() == 1 {
-                if let Inline::Image { alt, src, title } = &paragraph.inlines[0] {
+            if inlines.len() == 1 {
+                if let Inline::Image { alt, src, title } = &inlines[0] {
                     blocks.push(Block::Image {
                         alt: alt.clone(),
                         src: src.clone(),
@@ -1508,37 +1611,38 @@ fn classify_paragraph(
             }
 
             let block = match token.as_str() {
-                "title" => Block::Title(paragraph.inlines),
+                "title" => Block::Title(inlines),
                 "h1" => Block::Heading {
                     level: 1,
-                    content: paragraph.inlines,
+                    content: inlines,
                 },
                 "h2" => Block::Heading {
                     level: 2,
-                    content: paragraph.inlines,
+                    content: inlines,
                 },
                 "h3" => Block::Heading {
                     level: 3,
-                    content: paragraph.inlines,
+                    content: inlines,
                 },
                 "h4" => Block::Heading {
                     level: 4,
-                    content: paragraph.inlines,
+                    content: inlines,
                 },
                 "h5" => Block::Heading {
                     level: 5,
-                    content: paragraph.inlines,
+                    content: inlines,
                 },
                 "h6" => Block::Heading {
                     level: 6,
-                    content: paragraph.inlines,
+                    content: inlines,
                 },
-                "quote" => Block::BlockQuote(paragraph.inlines),
-                "code" => Block::CodeBlock {
-                    language: None,
-                    code: inline_text(&paragraph.inlines),
-                },
-                _ => Block::Paragraph(paragraph.inlines),
+                "quote" => Block::BlockQuote(inlines),
+                "code" => {
+                    let raw = inline_text(&inlines);
+                    let (language, code) = extract_code_language_marker(raw);
+                    Block::CodeBlock { language, code }
+                }
+                _ => Block::Paragraph(inlines),
             };
 
             blocks.push(block);
@@ -1546,12 +1650,14 @@ fn classify_paragraph(
     }
 }
 
-fn flush_pending_list(
-    pending_list: &mut Option<(bool, Vec<Vec<Inline>>)>,
-    blocks: &mut Vec<Block>,
-) {
-    if let Some((ordered, items)) = pending_list.take() {
-        blocks.push(Block::List { ordered, items });
+fn flush_pending_list(pending_list: &mut Option<PendingList>, blocks: &mut Vec<Block>) {
+    if let Some(list) = pending_list.take() {
+        blocks.push(Block::List {
+            ordered: list.ordered,
+            items: list.items,
+            levels: list.levels,
+            item_ordered: list.item_ordered,
+        });
     }
 }
 
@@ -1602,6 +1708,45 @@ fn attr_value(start: &BytesStart<'_>, local_key: &[u8]) -> Option<String> {
         .flatten()
         .find(|attr| local_name(attr.key.as_ref()) == local_key)
         .and_then(|attr| String::from_utf8(attr.value.as_ref().to_vec()).ok())
+}
+
+fn parse_twips_value(value: &str) -> Option<u32> {
+    value
+        .trim()
+        .parse::<i64>()
+        .ok()
+        .map(|raw| raw.max(0))
+        .and_then(|raw| u32::try_from(raw).ok())
+}
+
+fn list_level_from_indent(item_indent_left: u32, base_indent_left: u32) -> u8 {
+    if item_indent_left <= base_indent_left {
+        return 0;
+    }
+
+    let delta = item_indent_left.saturating_sub(base_indent_left);
+    let rounded_steps = (delta + (LIST_INDENT_STEP_TWIPS / 2)) / LIST_INDENT_STEP_TWIPS;
+    u8::try_from(rounded_steps).unwrap_or(u8::MAX)
+}
+
+fn extract_code_language_marker(raw: String) -> (Option<String>, String) {
+    let Some(without_prefix) = raw.strip_prefix(CODE_LANG_MARKER_PREFIX) else {
+        return (None, raw);
+    };
+
+    let Some(end) = without_prefix.find(CODE_LANG_MARKER_SUFFIX) else {
+        return (None, raw);
+    };
+
+    let language = without_prefix[..end].trim();
+    let code_start = end + CODE_LANG_MARKER_SUFFIX.len();
+    let code = without_prefix[code_start..].to_string();
+
+    if language.is_empty() {
+        (None, code)
+    } else {
+        (Some(language.to_string()), code)
+    }
 }
 
 fn normalize_docx_target(target: &str) -> String {
@@ -1676,6 +1821,8 @@ mod tests {
                         vec![Inline::Text("a".into())],
                         vec![Inline::Text("b".into())],
                     ],
+                    levels: Vec::new(),
+                    item_ordered: Vec::new(),
                 },
                 Block::Image {
                     alt: "logo".into(),
@@ -1777,6 +1924,104 @@ mod tests {
             .collect();
 
         assert_eq!(heading_levels, vec![4, 5, 6]);
+    }
+
+    #[test]
+    fn write_and_read_docx_roundtrip_preserves_nested_list_levels() {
+        let dir = tempdir().expect("tempdir should be created");
+        let output_docx = dir.path().join("out.docx");
+
+        let doc = Document {
+            blocks: vec![Block::List {
+                ordered: false,
+                items: vec![
+                    vec![Inline::Text("parent bullet".into())],
+                    vec![Inline::Text("child bullet".into())],
+                    vec![Inline::Text("parent number".into())],
+                    vec![Inline::Text("child number".into())],
+                ],
+                levels: vec![0, 1, 0, 1],
+                item_ordered: vec![false, false, true, true],
+            }],
+        };
+
+        let write_warnings = write_docx(
+            &doc,
+            dir.path(),
+            &output_docx,
+            &DocxWriteOptions {
+                allow_remote_images: false,
+                style_map: StyleMap::builtin(),
+                template: None,
+            },
+        )
+        .expect("DOCX write should succeed");
+        assert!(write_warnings.is_empty());
+
+        let (read_doc, read_warnings) = read_docx(
+            &output_docx,
+            &DocxReadOptions {
+                assets_dir: dir.path().join("assets"),
+                style_map: StyleMap::builtin(),
+            },
+        )
+        .expect("DOCX read should succeed");
+        assert!(read_warnings.is_empty());
+
+        let Some(Block::List {
+            levels,
+            item_ordered,
+            ..
+        }) = read_doc.blocks.first()
+        else {
+            panic!("expected first block to be a list");
+        };
+
+        assert_eq!(levels, &vec![0, 1, 0, 1]);
+        assert_eq!(item_ordered, &vec![false, false, true, true]);
+    }
+
+    #[test]
+    fn write_and_read_docx_roundtrip_preserves_code_block_language() {
+        let dir = tempdir().expect("tempdir should be created");
+        let output_docx = dir.path().join("out.docx");
+
+        let doc = Document {
+            blocks: vec![Block::CodeBlock {
+                language: Some("rust".into()),
+                code: "fn main() {\n    println!(\"hi\");\n}".into(),
+            }],
+        };
+
+        let write_warnings = write_docx(
+            &doc,
+            dir.path(),
+            &output_docx,
+            &DocxWriteOptions {
+                allow_remote_images: false,
+                style_map: StyleMap::builtin(),
+                template: None,
+            },
+        )
+        .expect("DOCX write should succeed");
+        assert!(write_warnings.is_empty());
+
+        let (read_doc, read_warnings) = read_docx(
+            &output_docx,
+            &DocxReadOptions {
+                assets_dir: dir.path().join("assets"),
+                style_map: StyleMap::builtin(),
+            },
+        )
+        .expect("DOCX read should succeed");
+        assert!(read_warnings.is_empty());
+
+        let Some(Block::CodeBlock { language, code }) = read_doc.blocks.first() else {
+            panic!("expected first block to be a code block");
+        };
+
+        assert_eq!(language.as_deref(), Some("rust"));
+        assert_eq!(code, "fn main() {\n    println!(\"hi\");\n}");
     }
 
     #[test]

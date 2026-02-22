@@ -22,6 +22,10 @@ pub enum Block {
     List {
         ordered: bool,
         items: Vec<Vec<Inline>>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        levels: Vec<u8>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        item_ordered: Vec<bool>,
     },
     Table {
         headers: Vec<Vec<Inline>>,
