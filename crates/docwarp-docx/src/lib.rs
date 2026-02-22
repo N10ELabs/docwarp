@@ -22,7 +22,6 @@ const CONTENT_TYPES_NS: &str = "http://schemas.openxmlformats.org/package/2006/c
 const LIST_BASE_INDENT_TWIPS: u32 = 720;
 const LIST_INDENT_STEP_TWIPS: u32 = 360;
 const CODE_LANG_MARKER_PREFIX: &str = "[[docwarp-code-lang:";
-const LEGACY_CODE_LANG_MARKER_PREFIX: &str = "[[instruct-code-lang:";
 const CODE_LANG_MARKER_SUFFIX: &str = "]]";
 
 #[derive(Debug, Clone)]
@@ -1855,9 +1854,7 @@ fn list_level_from_indent(item_indent_left: u32, base_indent_left: u32) -> u8 {
 }
 
 fn extract_code_language_marker(raw: String) -> (Option<String>, String) {
-    parse_code_language_marker(&raw, CODE_LANG_MARKER_PREFIX)
-        .or_else(|| parse_code_language_marker(&raw, LEGACY_CODE_LANG_MARKER_PREFIX))
-        .unwrap_or((None, raw))
+    parse_code_language_marker(&raw, CODE_LANG_MARKER_PREFIX).unwrap_or((None, raw))
 }
 
 fn parse_code_language_marker(raw: &str, prefix: &str) -> Option<(Option<String>, String)> {
@@ -2198,8 +2195,8 @@ mod tests {
     }
 
     #[test]
-    fn extract_code_language_marker_accepts_legacy_prefix() {
-        let raw = "[[instruct-code-lang:rust]]fn main() {}".to_string();
+    fn extract_code_language_marker_accepts_docwarp_prefix() {
+        let raw = "[[docwarp-code-lang:rust]]fn main() {}".to_string();
         let (language, code) = super::extract_code_language_marker(raw);
 
         assert_eq!(language.as_deref(), Some("rust"));
