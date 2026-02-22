@@ -42,8 +42,8 @@ Global `brew install docwarp` becomes available only after `homebrew/core` inclu
 Install via tap:
 
 ```bash
-brew tap N10ELabs/docwarp https://github.com/N10ELabs/docwarp
-brew install n10elabs/docwarp/docwarp
+brew tap N10ELabs/tap https://github.com/N10ELabs/homebrew-tap
+brew install n10elabs/tap/docwarp
 ```
 
 If you need to install from a specific release formula file:

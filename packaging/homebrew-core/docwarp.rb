@@ -4,13 +4,13 @@ class Docwarp < Formula
   desc "Bidirectional Markdown <-> DOCX converter"
   homepage "https://github.com/N10ELabs/docwarp"
   url "https://github.com/N10ELabs/docwarp/archive/refs/tags/v0.1.0.tar.gz"
-  sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+  sha256 "6cc7656358911b59a883f1ec5a3468610193b37e0f750f7256c1daa9da664cc5"
   license "Apache-2.0"
 
   depends_on "rust" => :build
 
   def install
-    system "cargo", "install", "--locked", *std_cargo_args(path: "crates/docwarp-cli")
+    system "cargo", "install", *std_cargo_args(path: "crates/docwarp-cli")
   end
 
   test do
