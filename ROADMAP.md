@@ -67,7 +67,6 @@ Last updated: 2026-02-22
 - [x] Add install docs for:
   - [x] binary download
   - [x] Homebrew tap
-
 ## Phase 5: Pre-Release Enhancements (`P1`)
 - [x] Add batch conversion mode (`--glob` or directory input) while keeping single-file mode default.
 - [X] Simplify CLI interface significantly. Take inspiration from great CLI apps like Codex

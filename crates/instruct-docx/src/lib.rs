@@ -53,10 +53,36 @@ struct DocxBuildState {
     relationships: Vec<Relationship>,
     media_files: Vec<MediaFile>,
     next_rel_id: usize,
+    next_media_index: usize,
     next_docpr_id: usize,
+    reserved_media_targets: BTreeSet<String>,
 }
 
 impl DocxBuildState {
+    fn from_template(template: Option<&TemplatePackage>) -> Self {
+        let mut state = DocxBuildState::default();
+
+        if let Some(template) = template {
+            state.relationships = template.document_relationships.clone();
+            state.next_rel_id = template
+                .document_relationships
+                .iter()
+                .filter_map(|rel| parse_numeric_rel_id(&rel.id))
+                .max()
+                .unwrap_or(0);
+
+            for path in template.entries.keys() {
+                if let Some(target) = path.strip_prefix("word/") {
+                    if target.starts_with("media/") {
+                        state.reserved_media_targets.insert(target.to_string());
+                    }
+                }
+            }
+        }
+
+        state
+    }
+
     fn next_rel_id(&mut self) -> String {
         self.next_rel_id += 1;
         format!("rId{}", self.next_rel_id)
@@ -79,7 +105,7 @@ impl DocxBuildState {
     }
 
     fn add_image(&mut self, extension: &str, content_type: &str, bytes: Vec<u8>) -> String {
-        let image_index = self.media_files.len() + 1;
+        let image_index = self.next_available_media_index(extension);
         let rel_id = self.next_rel_id();
         let filename = format!("image{image_index}.{extension}");
         let target = format!("media/{filename}");
@@ -99,6 +125,22 @@ impl DocxBuildState {
         });
 
         rel_id
+    }
+
+    fn next_available_media_index(&mut self, extension: &str) -> usize {
+        loop {
+            self.next_media_index += 1;
+            let candidate = format!("media/image{}.{}", self.next_media_index, extension);
+            let conflict = self.reserved_media_targets.contains(&candidate)
+                || self
+                    .media_files
+                    .iter()
+                    .any(|media| media.target.eq_ignore_ascii_case(&candidate));
+
+            if !conflict {
+                return self.next_media_index;
+            }
+        }
     }
 }
 
@@ -122,6 +164,13 @@ struct ParseTable {
     current_cell: Vec<Inline>,
 }
 
+#[derive(Debug, Clone)]
+struct TemplatePackage {
+    entries: BTreeMap<String, Vec<u8>>,
+    document_relationships: Vec<Relationship>,
+    section_properties_xml: Option<String>,
+}
+
 pub fn write_docx(
     document: &Document,
     markdown_base_dir: &Path,
@@ -129,58 +178,64 @@ pub fn write_docx(
     options: &DocxWriteOptions,
 ) -> Result<Vec<ConversionWarning>> {
     let mut warnings = Vec::new();
+    let template = load_template_package(options.template.as_deref(), &mut warnings)?;
 
     if let Some(parent) = output_path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("failed creating output directory: {}", parent.display()))?;
     }
 
-    let mut state = DocxBuildState::default();
-    // styles.xml must be explicitly related from document.xml for paragraph/table styles to render.
-    let styles_rel_id = state.next_rel_id();
-    state.relationships.push(Relationship {
-        id: styles_rel_id,
-        rel_type: format!("{OFFICE_REL_NS}/styles"),
-        target: "styles.xml".to_string(),
-        target_mode: None,
-    });
+    let mut state = DocxBuildState::from_template(template.as_ref());
+    ensure_styles_relationship(&mut state);
+
     let document_xml = build_document_xml(
         document,
         markdown_base_dir,
         options,
+        template
+            .as_ref()
+            .and_then(|package| package.section_properties_xml.as_deref()),
         &mut state,
         &mut warnings,
     )?;
 
-    let styles_xml = load_styles_xml(options.template.as_deref(), &mut warnings)?;
-    let content_types_xml = build_content_types_xml(&state.media_files);
-    let package_rels_xml = build_package_relationships_xml();
+    let styles_xml = resolve_styles_xml(template.as_ref());
+    let template_content_types = template
+        .as_ref()
+        .and_then(|package| package.entries.get("[Content_Types].xml"))
+        .map(|bytes| bytes.as_slice());
+    let content_types_xml = build_content_types_xml(&state.media_files, template_content_types);
+    let package_rels_xml = template
+        .as_ref()
+        .and_then(|package| package.entries.get("_rels/.rels"))
+        .cloned()
+        .unwrap_or_else(build_package_relationships_xml);
     let document_rels_xml = build_document_relationships_xml(&state.relationships);
-    let core_xml = build_core_properties_xml();
-    let app_xml = build_app_properties_xml();
+
+    let mut output_entries = template
+        .as_ref()
+        .map(|package| package.entries.clone())
+        .unwrap_or_default();
+
+    output_entries.insert("[Content_Types].xml".to_string(), content_types_xml);
+    output_entries.insert("_rels/.rels".to_string(), package_rels_xml);
+    output_entries.insert("word/document.xml".to_string(), document_xml);
+    output_entries.insert(
+        "word/_rels/document.xml.rels".to_string(),
+        document_rels_xml,
+    );
+    output_entries.insert("word/styles.xml".to_string(), styles_xml);
+    output_entries.insert("docProps/core.xml".to_string(), build_core_properties_xml());
+    output_entries.insert("docProps/app.xml".to_string(), build_app_properties_xml());
 
     let file = fs::File::create(output_path)
         .with_context(|| format!("failed creating output DOCX: {}", output_path.display()))?;
     let mut zip = ZipWriter::new(file);
     let file_options = SimpleFileOptions::default();
 
-    write_zip_entry(
-        &mut zip,
-        "[Content_Types].xml",
-        &content_types_xml,
-        file_options,
-    )?;
-    write_zip_entry(&mut zip, "_rels/.rels", &package_rels_xml, file_options)?;
-    write_zip_entry(&mut zip, "word/document.xml", &document_xml, file_options)?;
-    write_zip_entry(
-        &mut zip,
-        "word/_rels/document.xml.rels",
-        &document_rels_xml,
-        file_options,
-    )?;
-    write_zip_entry(&mut zip, "word/styles.xml", &styles_xml, file_options)?;
-    write_zip_entry(&mut zip, "docProps/core.xml", &core_xml, file_options)?;
-    write_zip_entry(&mut zip, "docProps/app.xml", &app_xml, file_options)?;
+    for (path, bytes) in output_entries {
+        write_zip_entry(&mut zip, &path, &bytes, file_options)?;
+    }
 
     for media in &state.media_files {
         let path = format!("word/{}", media.target);
@@ -209,17 +264,20 @@ fn build_document_xml(
     document: &Document,
     markdown_base_dir: &Path,
     options: &DocxWriteOptions,
+    section_properties_xml: Option<&str>,
     state: &mut DocxBuildState,
     warnings: &mut Vec<ConversionWarning>,
 ) -> Result<Vec<u8>> {
     let mut body = String::new();
 
-    for block in &document.blocks {
+    for (block_index, block) in document.blocks.iter().enumerate() {
         match block {
             Block::Title(content) => {
                 body.push_str(&render_paragraph(
                     content,
                     &options.style_map.docx_style_for("title"),
+                    if block_index > 0 { Some(240) } else { None },
+                    Some(240),
                     markdown_base_dir,
                     options,
                     state,
@@ -239,6 +297,8 @@ fn build_document_xml(
                 body.push_str(&render_paragraph(
                     content,
                     &options.style_map.docx_style_for(token),
+                    if block_index > 0 { Some(240) } else { None },
+                    Some(240),
                     markdown_base_dir,
                     options,
                     state,
@@ -249,6 +309,8 @@ fn build_document_xml(
                 body.push_str(&render_paragraph(
                     content,
                     &options.style_map.docx_style_for("paragraph"),
+                    None,
+                    Some(240),
                     markdown_base_dir,
                     options,
                     state,
@@ -259,6 +321,8 @@ fn build_document_xml(
                 body.push_str(&render_paragraph(
                     content,
                     &options.style_map.docx_style_for("quote"),
+                    None,
+                    None,
                     markdown_base_dir,
                     options,
                     state,
@@ -280,6 +344,8 @@ fn build_document_xml(
                 body.push_str(&render_paragraph(
                     &code_inlines,
                     &options.style_map.docx_style_for("code"),
+                    None,
+                    None,
                     markdown_base_dir,
                     options,
                     state,
@@ -297,6 +363,8 @@ fn build_document_xml(
                     body.push_str(&render_paragraph(
                         item,
                         &style,
+                        None,
+                        None,
                         markdown_base_dir,
                         options,
                         state,
@@ -324,6 +392,8 @@ fn build_document_xml(
                 body.push_str(&render_paragraph(
                     &[inline],
                     &options.style_map.docx_style_for("paragraph"),
+                    None,
+                    Some(240),
                     markdown_base_dir,
                     options,
                     state,
@@ -334,6 +404,8 @@ fn build_document_xml(
                 body.push_str(&render_paragraph(
                     &[Inline::Text("---".to_string())],
                     &options.style_map.docx_style_for("paragraph"),
+                    None,
+                    None,
                     markdown_base_dir,
                     options,
                     state,
@@ -343,15 +415,20 @@ fn build_document_xml(
         }
     }
 
-    body.push_str(
-        "<w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/><w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" w:header=\"708\" w:footer=\"708\" w:gutter=\"0\"/></w:sectPr>",
-    );
+    match section_properties_xml {
+        Some(section_properties_xml) => body.push_str(section_properties_xml),
+        None => body.push_str(default_section_properties_xml()),
+    }
 
     let xml = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<w:document xmlns:wpc=\"http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas\" xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\" xmlns:o=\"urn:schemas-microsoft-com:office:office\" xmlns:r=\"{OFFICE_REL_NS}\" xmlns:m=\"http://schemas.openxmlformats.org/officeDocument/2006/math\" xmlns:v=\"urn:schemas-microsoft-com:vml\" xmlns:wp14=\"http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing\" xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" xmlns:w10=\"urn:schemas-microsoft-com:office:word\" xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:w14=\"http://schemas.microsoft.com/office/word/2010/wordml\" xmlns:wpg=\"http://schemas.microsoft.com/office/word/2010/wordprocessingGroup\" xmlns:wpi=\"http://schemas.microsoft.com/office/word/2010/wordprocessingInk\" xmlns:wne=\"http://schemas.microsoft.com/office/2006/wordml\" xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\" mc:Ignorable=\"w14 wp14\"><w:body>{body}</w:body></w:document>"
     );
 
     Ok(xml.into_bytes())
+}
+
+fn default_section_properties_xml() -> &'static str {
+    "<w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/><w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" w:header=\"708\" w:footer=\"708\" w:gutter=\"0\"/></w:sectPr>"
 }
 
 fn render_table(
@@ -420,6 +497,8 @@ fn render_table(
 fn render_paragraph(
     inlines: &[Inline],
     style: &str,
+    spacing_before_twips: Option<u32>,
+    spacing_after_twips: Option<u32>,
     markdown_base_dir: &Path,
     options: &DocxWriteOptions,
     state: &mut DocxBuildState,
@@ -428,6 +507,17 @@ fn render_paragraph(
     let mut out = String::new();
     out.push_str("<w:p><w:pPr>");
     out.push_str(&format!("<w:pStyle w:val=\"{}\"/>", escape_xml(style)));
+    if spacing_before_twips.is_some() || spacing_after_twips.is_some() {
+        let mut spacing = String::from("<w:spacing");
+        if let Some(before) = spacing_before_twips {
+            spacing.push_str(&format!(" w:before=\"{before}\""));
+        }
+        if let Some(after) = spacing_after_twips {
+            spacing.push_str(&format!(" w:after=\"{after}\""));
+        }
+        spacing.push_str("/>");
+        out.push_str(&spacing);
+    }
     out.push_str("</w:pPr>");
     out.push_str(&render_inlines(
         inlines,
@@ -748,10 +838,10 @@ fn detect_image_type(src: &str, bytes: &[u8]) -> Option<(String, String)> {
     None
 }
 
-fn load_styles_xml(
+fn load_template_package(
     template_path: Option<&Path>,
     warnings: &mut Vec<ConversionWarning>,
-) -> Result<Vec<u8>> {
+) -> Result<Option<TemplatePackage>> {
     if let Some(template_path) = template_path {
         if !template_path.exists() {
             warnings.push(
@@ -761,24 +851,11 @@ fn load_styles_xml(
                 )
                 .with_location(template_path.display().to_string()),
             );
-            return Ok(default_styles_xml().as_bytes().to_vec());
+            return Ok(None);
         }
 
-        match fs::File::open(template_path)
-            .context("failed opening template")
-            .and_then(|file| {
-                let mut archive =
-                    ZipArchive::new(file).context("failed reading template as zip")?;
-                let mut styles = String::new();
-                let mut entry = archive
-                    .by_name("word/styles.xml")
-                    .context("template is missing word/styles.xml")?;
-                entry
-                    .read_to_string(&mut styles)
-                    .context("failed reading template styles")?;
-                Ok(styles.into_bytes())
-            }) {
-            Ok(bytes) => return Ok(bytes),
+        match read_template_package(template_path) {
+            Ok(template) => return Ok(Some(template)),
             Err(err) => {
                 warnings.push(
                     ConversionWarning::new(
@@ -791,7 +868,134 @@ fn load_styles_xml(
         }
     }
 
-    Ok(default_styles_xml().as_bytes().to_vec())
+    Ok(None)
+}
+
+fn read_template_package(template_path: &Path) -> Result<TemplatePackage> {
+    let file = fs::File::open(template_path).context("failed opening template")?;
+    let mut archive = ZipArchive::new(file).context("failed reading template as zip")?;
+    let mut entries = BTreeMap::new();
+
+    for index in 0..archive.len() {
+        let mut entry = archive
+            .by_index(index)
+            .with_context(|| format!("failed reading template zip entry at index {index}"))?;
+        let name = entry.name().to_string();
+        if name.ends_with('/') {
+            continue;
+        }
+
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes)?;
+        entries.insert(name, bytes);
+    }
+
+    if !entries.contains_key("word/styles.xml") {
+        return Err(anyhow!("template is missing word/styles.xml"));
+    }
+
+    let document_relationships = entries
+        .get("word/_rels/document.xml.rels")
+        .map(|bytes| parse_relationships_xml(bytes))
+        .transpose()?
+        .unwrap_or_default();
+    let section_properties_xml = entries
+        .get("word/document.xml")
+        .and_then(|bytes| extract_last_sect_pr_xml(bytes));
+
+    Ok(TemplatePackage {
+        entries,
+        document_relationships,
+        section_properties_xml,
+    })
+}
+
+fn resolve_styles_xml(template: Option<&TemplatePackage>) -> Vec<u8> {
+    template
+        .and_then(|package| package.entries.get("word/styles.xml").cloned())
+        .unwrap_or_else(|| default_styles_xml().as_bytes().to_vec())
+}
+
+fn ensure_styles_relationship(state: &mut DocxBuildState) {
+    if state.relationships.iter().any(|rel| {
+        rel.rel_type == format!("{OFFICE_REL_NS}/styles")
+            && rel.target.eq_ignore_ascii_case("styles.xml")
+    }) {
+        return;
+    }
+
+    let style_rel_id = state.next_rel_id();
+    state.relationships.push(Relationship {
+        id: style_rel_id,
+        rel_type: format!("{OFFICE_REL_NS}/styles"),
+        target: "styles.xml".to_string(),
+        target_mode: None,
+    });
+}
+
+fn parse_relationships_xml(bytes: &[u8]) -> Result<Vec<Relationship>> {
+    let xml =
+        String::from_utf8(bytes.to_vec()).context("template relationship XML is not UTF-8")?;
+    let mut relationships = Vec::new();
+    let mut reader = Reader::from_str(&xml);
+    reader.config_mut().trim_text(true);
+
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Empty(start)) | Ok(Event::Start(start)) => {
+                if local_name(start.name().as_ref()) == b"Relationship" {
+                    let Some(id) = attr_value(&start, b"Id") else {
+                        continue;
+                    };
+                    let Some(rel_type) = attr_value(&start, b"Type") else {
+                        continue;
+                    };
+                    let Some(target) = attr_value(&start, b"Target") else {
+                        continue;
+                    };
+                    let target_mode = attr_value(&start, b"TargetMode");
+
+                    relationships.push(Relationship {
+                        id,
+                        rel_type,
+                        target,
+                        target_mode,
+                    });
+                }
+            }
+            Ok(Event::Eof) => break,
+            Ok(_) => {}
+            Err(err) => return Err(anyhow!("failed parsing template relationships: {err}")),
+        }
+        buf.clear();
+    }
+
+    Ok(relationships)
+}
+
+fn parse_numeric_rel_id(value: &str) -> Option<usize> {
+    value
+        .strip_prefix("rId")
+        .and_then(|suffix| suffix.parse::<usize>().ok())
+}
+
+fn extract_last_sect_pr_xml(document_xml: &[u8]) -> Option<String> {
+    let xml = String::from_utf8_lossy(document_xml);
+    let start = xml.rfind("<w:sectPr")?;
+    let trailing = &xml[start..];
+
+    if let Some(end_offset) = trailing.find("</w:sectPr>") {
+        let end = start + end_offset + "</w:sectPr>".len();
+        return Some(xml[start..end].to_string());
+    }
+
+    if let Some(end_offset) = trailing.find("/>") {
+        let end = start + end_offset + 2;
+        return Some(xml[start..end].to_string());
+    }
+
+    None
 }
 
 fn default_styles_xml() -> &'static str {
@@ -817,7 +1021,14 @@ fn default_styles_xml() -> &'static str {
 </w:styles>"
 }
 
-fn build_content_types_xml(media_files: &[MediaFile]) -> Vec<u8> {
+fn build_content_types_xml(
+    media_files: &[MediaFile],
+    template_content_types: Option<&[u8]>,
+) -> Vec<u8> {
+    if let Some(template_xml) = template_content_types {
+        return merge_content_types_with_media_defaults(template_xml, media_files);
+    }
+
     let mut defaults = BTreeSet::new();
     defaults.insert((
         "rels".to_string(),
@@ -846,6 +1057,30 @@ fn build_content_types_xml(media_files: &[MediaFile]) -> Vec<u8> {
     xml.push_str("<Override PartName=\"/docProps/core.xml\" ContentType=\"application/vnd.openxmlformats-package.core-properties+xml\"/>");
     xml.push_str("<Override PartName=\"/docProps/app.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.extended-properties+xml\"/>");
     xml.push_str("</Types>");
+
+    xml.into_bytes()
+}
+
+fn merge_content_types_with_media_defaults(
+    template_xml: &[u8],
+    media_files: &[MediaFile],
+) -> Vec<u8> {
+    let mut xml = String::from_utf8_lossy(template_xml).to_string();
+    let close_tag = "</Types>";
+    if let Some(close_index) = xml.rfind(close_tag) {
+        let mut additions = String::new();
+        for media in media_files {
+            let marker = format!("Extension=\"{}\"", escape_xml(&media.extension));
+            if !xml.contains(&marker) {
+                additions.push_str(&format!(
+                    "<Default Extension=\"{}\" ContentType=\"{}\"/>",
+                    escape_xml(&media.extension),
+                    escape_xml(&media.content_type)
+                ));
+            }
+        }
+        xml.insert_str(close_index, &additions);
+    }
 
     xml.into_bytes()
 }
@@ -1725,6 +1960,206 @@ mod tests {
     }
 
     #[test]
+    fn preserves_template_sections_headers_footers_and_related_parts() {
+        let dir = tempdir().expect("tempdir should be created");
+        let template_path = dir.path().join("full-template.dotx");
+        let output_docx = dir.path().join("out.docx");
+
+        let mut entries = BTreeMap::new();
+        entries.insert(
+            "[Content_Types].xml".to_string(),
+            br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Default Extension="png" ContentType="image/png"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+  <Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>
+  <Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>
+  <Override PartName="/word/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>
+  <Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>
+  <Override PartName="/word/fontTable.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml"/>
+  <Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>
+  <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
+  <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
+</Types>"#
+                .to_vec(),
+        );
+        entries.insert(
+            "_rels/.rels".to_string(),
+            br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>
+  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>
+</Relationships>"#
+                .to_vec(),
+        );
+        entries.insert("docProps/core.xml".to_string(), build_core_properties_xml());
+        entries.insert("docProps/app.xml".to_string(), build_app_properties_xml());
+        entries.insert(
+            "word/styles.xml".to_string(),
+            br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:style w:type="paragraph" w:styleId="Normal"><w:name w:val="Normal"/></w:style>
+</w:styles>"#
+                .to_vec(),
+        );
+        entries.insert(
+            "word/document.xml".to_string(),
+            br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <w:body>
+    <w:p><w:r><w:t>template body</w:t></w:r></w:p>
+    <w:sectPr>
+      <w:headerReference w:type="default" r:id="rIdHeaderDefault"/>
+      <w:footerReference w:type="default" r:id="rIdFooterDefault"/>
+      <w:pgSz w:w="12240" w:h="15840"/>
+    </w:sectPr>
+  </w:body>
+</w:document>"#
+                .to_vec(),
+        );
+        entries.insert(
+            "word/_rels/document.xml.rels".to_string(),
+            br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+  <Relationship Id="rIdHeaderDefault" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>
+  <Relationship Id="rIdFooterDefault" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/>
+  <Relationship Id="rIdTheme" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="theme/theme1.xml"/>
+  <Relationship Id="rIdSettings" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/>
+  <Relationship Id="rIdFontTable" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/fontTable" Target="fontTable.xml"/>
+  <Relationship Id="rIdNumbering" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>
+</Relationships>"#
+                .to_vec(),
+        );
+        entries.insert(
+            "word/header1.xml".to_string(),
+            br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:p><w:r><w:t>Template Header Marker</w:t></w:r></w:p>
+</w:hdr>"#
+                .to_vec(),
+        );
+        entries.insert(
+            "word/_rels/header1.xml.rels".to_string(),
+            br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rIdWatermarkImage" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/watermark.png"/>
+</Relationships>"#
+                .to_vec(),
+        );
+        entries.insert(
+            "word/footer1.xml".to_string(),
+            br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:p><w:r><w:t>Template Footer Marker</w:t></w:r></w:p>
+</w:ftr>"#
+                .to_vec(),
+        );
+        entries.insert(
+            "word/theme/theme1.xml".to_string(),
+            br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="TemplateTheme"/>"#
+                .to_vec(),
+        );
+        entries.insert(
+            "word/settings.xml".to_string(),
+            br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:zoom w:percent="120"/></w:settings>"#
+                .to_vec(),
+        );
+        entries.insert(
+            "word/fontTable.xml".to_string(),
+            br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:font w:name="Calibri"/></w:fonts>"#
+                .to_vec(),
+        );
+        entries.insert(
+            "word/numbering.xml".to_string(),
+            br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"></w:numbering>"#
+                .to_vec(),
+        );
+        entries.insert("word/media/watermark.png".to_string(), tiny_png());
+
+        write_template_entries_zip(&template_path, &entries).expect("template should be written");
+
+        let doc = Document {
+            blocks: vec![Block::Paragraph(vec![Inline::Text("Body".into())])],
+        };
+
+        let warnings = write_docx(
+            &doc,
+            dir.path(),
+            &output_docx,
+            &DocxWriteOptions {
+                allow_remote_images: false,
+                style_map: StyleMap::builtin(),
+                template: Some(template_path),
+            },
+        )
+        .expect("DOCX write should succeed");
+        assert!(warnings.is_empty(), "valid template should not warn");
+
+        let mut archive = ZipArchive::new(
+            fs::File::open(&output_docx).expect("written docx should be readable as zip"),
+        )
+        .expect("written docx should be a valid zip");
+
+        for required_part in [
+            "word/header1.xml",
+            "word/footer1.xml",
+            "word/theme/theme1.xml",
+            "word/settings.xml",
+            "word/fontTable.xml",
+            "word/numbering.xml",
+            "word/_rels/header1.xml.rels",
+            "word/media/watermark.png",
+        ] {
+            archive
+                .by_name(required_part)
+                .unwrap_or_else(|_| panic!("expected output to include {required_part}"));
+        }
+
+        let mut document_xml = String::new();
+        archive
+            .by_name("word/document.xml")
+            .expect("document.xml should exist")
+            .read_to_string(&mut document_xml)
+            .expect("document.xml should be readable");
+        assert!(
+            document_xml.contains("rIdHeaderDefault"),
+            "document.xml should preserve template section header reference"
+        );
+        assert!(
+            document_xml.contains("rIdFooterDefault"),
+            "document.xml should preserve template section footer reference"
+        );
+
+        let mut rels = String::new();
+        archive
+            .by_name("word/_rels/document.xml.rels")
+            .expect("document.xml.rels should exist")
+            .read_to_string(&mut rels)
+            .expect("document.xml.rels should be readable");
+        assert!(
+            rels.contains("Target=\"header1.xml\""),
+            "document rels should preserve header relationship"
+        );
+        assert!(
+            rels.contains("Target=\"footer1.xml\""),
+            "document rels should preserve footer relationship"
+        );
+        assert!(
+            rels.contains("Target=\"theme/theme1.xml\""),
+            "document rels should preserve theme relationship"
+        );
+    }
+
+    #[test]
     fn writes_document_relationship_for_styles_xml() {
         let dir = tempdir().expect("tempdir should be created");
         let output_docx = dir.path().join("out.docx");
@@ -1822,11 +2257,112 @@ mod tests {
         assert_eq!(rows[1].len(), 3);
     }
 
+    #[test]
+    fn markdown_paragraphs_emit_docx_spacing_to_preserve_blank_line_flow() {
+        let dir = tempdir().expect("tempdir should be created");
+        let output_docx = dir.path().join("out.docx");
+        let doc = Document {
+            blocks: vec![
+                Block::Paragraph(vec![Inline::Text("first".into())]),
+                Block::Paragraph(vec![Inline::Text("second".into())]),
+            ],
+        };
+
+        let warnings = write_docx(
+            &doc,
+            dir.path(),
+            &output_docx,
+            &DocxWriteOptions {
+                allow_remote_images: false,
+                style_map: StyleMap::builtin(),
+                template: None,
+            },
+        )
+        .expect("DOCX write should succeed");
+        assert!(warnings.is_empty());
+
+        let mut archive = ZipArchive::new(
+            fs::File::open(&output_docx).expect("written docx should be readable as zip"),
+        )
+        .expect("written docx should be a valid zip");
+        let mut document_xml = String::new();
+        archive
+            .by_name("word/document.xml")
+            .expect("document.xml should exist")
+            .read_to_string(&mut document_xml)
+            .expect("document.xml should be readable");
+
+        assert!(
+            document_xml.contains("<w:spacing w:after=\"240\"/>"),
+            "expected markdown paragraph spacing marker in DOCX output"
+        );
+    }
+
+    #[test]
+    fn markdown_headings_emit_docx_spacing_to_prevent_style_crunch() {
+        let dir = tempdir().expect("tempdir should be created");
+        let output_docx = dir.path().join("out.docx");
+        let doc = Document {
+            blocks: vec![
+                Block::Paragraph(vec![Inline::Text("Lead".into())]),
+                Block::Heading {
+                    level: 2,
+                    content: vec![Inline::Text("Section".into())],
+                },
+                Block::Paragraph(vec![Inline::Text("Body".into())]),
+            ],
+        };
+
+        let warnings = write_docx(
+            &doc,
+            dir.path(),
+            &output_docx,
+            &DocxWriteOptions {
+                allow_remote_images: false,
+                style_map: StyleMap::builtin(),
+                template: None,
+            },
+        )
+        .expect("DOCX write should succeed");
+        assert!(warnings.is_empty());
+
+        let mut archive = ZipArchive::new(
+            fs::File::open(&output_docx).expect("written docx should be readable as zip"),
+        )
+        .expect("written docx should be a valid zip");
+        let mut document_xml = String::new();
+        archive
+            .by_name("word/document.xml")
+            .expect("document.xml should exist")
+            .read_to_string(&mut document_xml)
+            .expect("document.xml should be readable");
+
+        assert!(
+            document_xml.contains(
+                "<w:pStyle w:val=\"Heading2\"/><w:spacing w:before=\"240\" w:after=\"240\"/>"
+            ) || document_xml.contains(
+                "<w:pStyle w:val=\"Heading2\"/><w:spacing w:after=\"240\" w:before=\"240\"/>"
+            ),
+            "expected heading paragraph to include spacing markers above and below"
+        );
+    }
+
     fn write_template_zip(path: &Path, styles_xml: &[u8]) -> Result<()> {
         let file = fs::File::create(path)?;
         let mut zip = ZipWriter::new(file);
         zip.start_file("word/styles.xml", SimpleFileOptions::default())?;
         zip.write_all(styles_xml)?;
+        zip.finish()?;
+        Ok(())
+    }
+
+    fn write_template_entries_zip(path: &Path, entries: &BTreeMap<String, Vec<u8>>) -> Result<()> {
+        let file = fs::File::create(path)?;
+        let mut zip = ZipWriter::new(file);
+        for (entry_path, bytes) in entries {
+            zip.start_file(entry_path, SimpleFileOptions::default())?;
+            zip.write_all(bytes)?;
+        }
         zip.finish()?;
         Ok(())
     }

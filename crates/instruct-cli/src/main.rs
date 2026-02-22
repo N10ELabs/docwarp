@@ -191,6 +191,12 @@ enum NativePickerOutcome {
     Unavailable,
 }
 
+#[derive(Debug, Default)]
+struct GuidedOptions {
+    template: Option<PathBuf>,
+    profile: Option<String>,
+}
+
 impl GuidedDirection {
     fn label(self) -> &'static str {
         match self {
@@ -210,8 +216,10 @@ impl GuidedDirection {
 fn run_guided_mode() -> Result<i32> {
     println!("Drop a Markdown or DOCX file/folder path and press Enter.");
     println!("Press Enter to open the file picker.");
+    println!("Type / for options.");
 
-    let input = prompt_for_input_path()?;
+    let mut options = GuidedOptions::default();
+    let input = prompt_for_input_path(&mut options)?;
     let direction = detect_guided_direction(&input)?;
     let output = default_guided_output_path(&input, direction);
 
@@ -222,19 +230,32 @@ fn run_guided_mode() -> Result<i32> {
     println!();
 
     match direction {
-        GuidedDirection::MdToDocx => {
-            run_md2docx(input, output, None, None, None, None, None, false, false)
-        }
+        GuidedDirection::MdToDocx => run_md2docx(
+            input,
+            output,
+            None,
+            options.template.clone(),
+            None,
+            None,
+            None,
+            false,
+            false,
+        ),
         GuidedDirection::DocxToMd => {
             run_docx2md(input, output, None, None, None, None, None, false)
         }
     }
 }
 
-fn prompt_for_input_path() -> Result<PathBuf> {
+fn prompt_for_input_path(options: &mut GuidedOptions) -> Result<PathBuf> {
     loop {
         let raw = prompt_line("Input path: ")?;
         let normalized = raw.trim();
+        if normalized == "/" || normalized.eq_ignore_ascii_case("/config") {
+            open_guided_options_menu(options)?;
+            continue;
+        }
+
         if normalized.is_empty() {
             if should_offer_native_picker() {
                 match pick_path_with_native_explorer()? {
@@ -254,6 +275,121 @@ fn prompt_for_input_path() -> Result<PathBuf> {
 
         eprintln!("path does not exist: {}", input.display());
     }
+}
+
+fn open_guided_options_menu(options: &mut GuidedOptions) -> Result<()> {
+    loop {
+        println!();
+        println!("Options");
+        println!(
+            "1) template: {}",
+            display_optional_path(options.template.as_deref())
+        );
+        println!(
+            "2) profile: {}{}",
+            options.profile.as_deref().unwrap_or("default"),
+            " (not yet applied)"
+        );
+        println!("q) back");
+
+        let selection = prompt_line("Select option: ")?;
+        match selection.trim() {
+            "1" => configure_template_option(options)?,
+            "2" => configure_profile_option(options)?,
+            "q" | "Q" => break,
+            _ => eprintln!("invalid selection: {}", selection.trim()),
+        }
+    }
+
+    Ok(())
+}
+
+fn configure_template_option(options: &mut GuidedOptions) -> Result<()> {
+    println!();
+    println!(
+        "Template is currently: {}",
+        display_optional_path(options.template.as_deref())
+    );
+    println!("Set template path, press Enter for picker, or type '-' to clear.");
+
+    let raw = prompt_line("Template: ")?;
+    let normalized = raw.trim();
+    if normalized == "-" {
+        options.template = None;
+        println!("template cleared");
+        return Ok(());
+    }
+    if normalized.is_empty() {
+        if should_offer_native_picker() {
+            match pick_path_with_native_explorer()? {
+                NativePickerOutcome::Selected(path) => {
+                    validate_template_path(&path)?;
+                    options.template = Some(path.clone());
+                    println!("template set: {}", path.display());
+                }
+                NativePickerOutcome::Cancelled => {}
+                NativePickerOutcome::Unavailable => {
+                    eprintln!("native picker unavailable; enter a template path manually");
+                }
+            }
+        } else {
+            eprintln!("template unchanged");
+        }
+        return Ok(());
+    }
+
+    let path = parse_user_path(normalized);
+    validate_template_path(&path)?;
+    options.template = Some(path.clone());
+    println!("template set: {}", path.display());
+    Ok(())
+}
+
+fn configure_profile_option(options: &mut GuidedOptions) -> Result<()> {
+    println!();
+    println!("Set profile name (session-only for now), or '-' to reset.");
+    let raw = prompt_line("Profile: ")?;
+    let normalized = raw.trim();
+    if normalized == "-" {
+        options.profile = None;
+        println!("profile reset to default");
+        return Ok(());
+    }
+    if normalized.is_empty() {
+        println!("profile unchanged");
+        return Ok(());
+    }
+
+    options.profile = Some(normalized.to_string());
+    println!("profile set: {normalized} (not yet applied)");
+    Ok(())
+}
+
+fn validate_template_path(path: &Path) -> Result<()> {
+    if !path.exists() {
+        return Err(anyhow!("template path does not exist: {}", path.display()));
+    }
+    if !path.is_file() {
+        return Err(anyhow!("template path is not a file: {}", path.display()));
+    }
+
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase());
+    if !matches!(extension.as_deref(), Some("dotx" | "docx")) {
+        return Err(anyhow!(
+            "template must be a .dotx or .docx file: {}",
+            path.display()
+        ));
+    }
+
+    Ok(())
+}
+
+fn display_optional_path(path: Option<&Path>) -> String {
+    path.map(|value| value.display().to_string())
+        .unwrap_or_else(|| "(none)".to_string())
 }
 
 fn should_offer_native_picker() -> bool {
