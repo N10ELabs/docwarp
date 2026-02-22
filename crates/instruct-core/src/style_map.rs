@@ -157,7 +157,10 @@ mod tests {
             ("h5", "Heading5"),
             ("h6", "Heading6"),
         ] {
-            assert_eq!(merged.md_to_docx.get(token).map(String::as_str), Some(style));
+            assert_eq!(
+                merged.md_to_docx.get(token).map(String::as_str),
+                Some(style)
+            );
         }
     }
 }

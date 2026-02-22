@@ -67,11 +67,13 @@ Last updated: 2026-02-22
 - [x] Add install docs for:
   - [x] binary download
   - [x] Homebrew tap
-- [ ] Publish `v0.1.0` and changelog.
 
 ## Phase 5: Pre-Release Enhancements (`P1`)
-- [ ] Add batch conversion mode (`--glob` or directory input) while keeping single-file mode default.
-- [ ] Simplify CLI interface significantly. Take inspiration from great CLI apps like Codex
+- [x] Add batch conversion mode (`--glob` or directory input) while keeping single-file mode default.
+- [X] Simplify CLI interface significantly. Take inspiration from great CLI apps like Codex
+- [ ] Add configs
+- [ ] Add ability to enter passwords for protected documents
+- [ ] Add config profiles for common use cases (e.g., academic, technical, business)
 - [ ] Add compatibility mode flags (for example, stricter markdown output for docs platforms).
 - [ ] Simplify CLI usage with config profiles and short command aliases so common permission-related flags/defaults (for example, remote image policy, strict mode, template/style-map paths) do not need to be repeated.
 - [ ] Improve style-map validation with actionable error diagnostics.
@@ -79,6 +81,7 @@ Last updated: 2026-02-22
 - [ ] Native Word equation support for bidirectional `md <-> docx`, including configurable equation style mapping so users do not need manual Insert Equation restyling (for example, statistical-method appendices).
 - [ ] Add performance benchmark suite for large documents.
 - [ ] Add regression test pack from real-world anonymized docs.
+- [ ] Publish `v0.1.0` and changelog.
 
 ## Phase 6: Stretch Pre-Release Scope (`P2`)
 - [ ] Footnotes/endnotes.

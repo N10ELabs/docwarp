@@ -15,15 +15,30 @@ MVP scaffold implemented for `v0.1.0`:
 ## Quick start
 
 ```bash
+instruct
 cargo run -p instruct-cli -- md2docx input.md --output output.docx
 cargo run -p instruct-cli -- docx2md input.docx --output output.md
 ```
 
+Guided mode:
+
+- Run `instruct` with no arguments.
+- Drag a file/folder path into the terminal (or browse interactively).
+- `instruct` detects Markdown vs DOCX and runs the matching conversion automatically.
+
 ## Commands
 
 ```text
-instruct md2docx <input.md> --output <output.docx> [--template <template.dotx>] [--style-map <map.yml>] [--config <instruct.yml>] [--report <report.json>] [--strict] [--allow-remote-images]
-instruct docx2md <input.docx> --output <output.md> [--assets-dir <dir>] [--style-map <map.yml>] [--config <instruct.yml>] [--report <report.json>] [--strict]
+instruct
+instruct md2docx <input.md|input_dir> --output <output.docx|output_dir> [--glob <pattern>] [--template <template.dotx>] [--style-map <map.yml>] [--config <instruct.yml>] [--report <report.json|report_dir>] [--strict] [--allow-remote-images]
+instruct docx2md <input.docx|input_dir> --output <output.md|output_dir> [--glob <pattern>] [--assets-dir <dir>] [--style-map <map.yml>] [--config <instruct.yml>] [--report <report.json|report_dir>] [--strict]
+```
+
+Batch mode:
+
+```bash
+instruct md2docx ./docs --output ./build/docx
+instruct docx2md ./contracts --output ./build/md --glob "**/*.docx"
 ```
 
 Run command-specific help for full examples:

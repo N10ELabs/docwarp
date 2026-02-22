@@ -13,6 +13,10 @@ fn root_help_includes_examples() -> Result<()> {
         "expected examples section in root help, got:\n{stdout}"
     );
     assert!(
+        stdout.contains("instruct"),
+        "expected guided-mode example in root help, got:\n{stdout}"
+    );
+    assert!(
         stdout.contains("instruct md2docx ./docs/spec.md --output ./build/spec.docx"),
         "expected md2docx example in root help, got:\n{stdout}"
     );
@@ -42,6 +46,10 @@ fn md2docx_help_includes_examples() -> Result<()> {
         stdout.contains("--report ./report.json --strict"),
         "expected strict/report example in md2docx help, got:\n{stdout}"
     );
+    assert!(
+        stdout.contains("--glob \"**/*.md\""),
+        "expected batch glob example in md2docx help, got:\n{stdout}"
+    );
 
     Ok(())
 }
@@ -63,6 +71,10 @@ fn docx2md_help_includes_examples() -> Result<()> {
     assert!(
         stdout.contains("--config ./.instruct.yml --report ./report.json"),
         "expected config/report example in docx2md help, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("--glob \"**/*.docx\""),
+        "expected batch glob example in docx2md help, got:\n{stdout}"
     );
 
     Ok(())
