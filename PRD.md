@@ -1,7 +1,7 @@
-# instruct PRD (MVP v0.1.0)
+# docwarp PRD (MVP v0.1.0)
 
 ## Product overview and problem statement.
-`instruct` is an open-source, lightweight CLI that converts documents bidirectionally between GitHub-Flavored Markdown (GFM) and Microsoft Word-compatible DOCX. The product solves a growing workflow gap between AI/agent-native markdown authoring and enterprise/client-facing Word deliverables.
+`docwarp` is an open-source, lightweight CLI that converts documents bidirectionally between GitHub-Flavored Markdown (GFM) and Microsoft Word-compatible DOCX. The product solves a growing workflow gap between AI/agent-native markdown authoring and enterprise/client-facing Word deliverables.
 
 The core problem is friction and quality loss when moving documents between markdown-centric tooling and Word-centric collaboration. Users need deterministic structure-preserving conversion with explicit warnings for unsupported features, while keeping distribution simple (single binary, no required external runtime).
 
@@ -29,15 +29,15 @@ The core problem is friction and quality loss when moving documents between mark
 ## Personas and primary use cases.
 ### Persona 1: AI-first technical writer
 - Writes docs in markdown (often generated/refined by an LLM) and needs Word output for stakeholders.
-- Uses `instruct md2docx` with optional template/style map for brand alignment.
+- Uses `docwarp md2docx` with optional template/style map for brand alignment.
 
 ### Persona 2: Operations/legal/business editor
 - Receives legacy or poorly structured DOCX files and needs markdown for agent-assisted revision.
-- Uses `instruct docx2md`, edits markdown via AI workflow, converts back to DOCX.
+- Uses `docwarp docx2md`, edits markdown via AI workflow, converts back to DOCX.
 
 ### Persona 3: OSS/web documentation maintainer
 - Converts Word documents into markdown for GitHub/web publishing.
-- Uses `instruct docx2md` to migrate content and extracted media.
+- Uses `docwarp docx2md` to migrate content and extracted media.
 
 ## Functional requirements.
 1. CLI must expose explicit directional subcommands.
@@ -76,21 +76,21 @@ The core problem is friction and quality loss when moving documents between mark
 ## CLI interface contract.
 ### Command 1
 ```bash
-instruct md2docx <input.md> --output <output.docx> [--template <template.dotx>] [--style-map <map.yml>] [--config <instruct.yml>] [--report <report.json>] [--strict] [--allow-remote-images]
+docwarp md2docx <input.md> --output <output.docx> [--template <template.dotx>] [--style-map <map.yml>] [--config <docwarp.yml>] [--report <report.json>] [--strict] [--allow-remote-images]
 ```
 
 ### Command 2
 ```bash
-instruct docx2md <input.docx> --output <output.md> [--assets-dir <dir>] [--style-map <map.yml>] [--config <instruct.yml>] [--report <report.json>] [--strict]
+docwarp docx2md <input.docx> --output <output.md> [--assets-dir <dir>] [--style-map <map.yml>] [--config <docwarp.yml>] [--report <report.json>] [--strict]
 ```
 
 ### Runtime behavior
-- Auto-load `.instruct.yml` from working directory when `--config` is omitted.
+- Auto-load `.docwarp.yml` from working directory when `--config` is omitted.
 - Print conversion summary and warning list to stdout.
 - Write report only when `--report` is provided.
 
 ## Config and style map schema.
-### Config file (`.instruct.yml` or `--config`)
+### Config file (`.docwarp.yml` or `--config`)
 ```yaml
 markdown_flavor: gfm
 style_map: ./style-map.yml
@@ -141,10 +141,10 @@ md_to_docx:
 
 ## Architecture and module boundaries.
 ### Workspace layout
-- `crates/instruct-cli`: command parsing, config loading, orchestration, reporting, exit behavior.
-- `crates/instruct-core`: canonical document model, warnings, config types, report schema, style-map merge logic.
-- `crates/instruct-md`: GFM parse/render adapter using `pulldown-cmark`.
-- `crates/instruct-docx`: DOCX OpenXML read/write adapter using `zip` and `quick-xml`.
+- `crates/docwarp-cli`: command parsing, config loading, orchestration, reporting, exit behavior.
+- `crates/docwarp-core`: canonical document model, warnings, config types, report schema, style-map merge logic.
+- `crates/docwarp-md`: GFM parse/render adapter using `pulldown-cmark`.
+- `crates/docwarp-docx`: DOCX OpenXML read/write adapter using `zip` and `quick-xml`.
 
 ### Canonical model
 - A shared intermediate `Document` model is mandatory between format adapters.

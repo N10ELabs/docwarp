@@ -13,19 +13,19 @@ Exit-code contract:
 Markdown to DOCX:
 
 ```bash
-instruct md2docx ./input.md --output ./output.docx --strict
+docwarp md2docx ./input.md --output ./output.docx --strict
 ```
 
 DOCX to Markdown:
 
 ```bash
-instruct docx2md ./input.docx --output ./output.md --strict
+docwarp docx2md ./input.docx --output ./output.md --strict
 ```
 
 With report output:
 
 ```bash
-instruct md2docx ./input.md --output ./output.docx --strict --report ./report.json
+docwarp md2docx ./input.md --output ./output.docx --strict --report ./report.json
 ```
 
 ## CI Integration Guidance
@@ -38,7 +38,7 @@ Example GitHub Actions step:
 - name: Verify docs conversion (strict)
   run: |
     set -euo pipefail
-    instruct md2docx ./fixtures/md/10-comprehensive.md \
+    docwarp md2docx ./fixtures/md/10-comprehensive.md \
       --output ./tmp/ci-check.docx \
       --strict \
       --report ./tmp/ci-check-report.json

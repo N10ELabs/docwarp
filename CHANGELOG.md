@@ -6,11 +6,11 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
-- Workspace scaffold for `instruct-cli`, `instruct-core`, `instruct-md`, and `instruct-docx`.
+- Workspace scaffold for `docwarp-cli`, `docwarp-core`, `docwarp-md`, and `docwarp-docx`.
 - Bidirectional CLI:
-  - `instruct md2docx`
-  - `instruct docx2md`
-- Config loading with auto-discovery of `.instruct.yml`.
+  - `docwarp md2docx`
+  - `docwarp docx2md`
+- Config loading with auto-discovery of `.docwarp.yml`.
 - Style-map loading/merging with precedence:
   - built-in defaults
   - config file
@@ -37,5 +37,5 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 
-- Homebrew formula metadata now targets `N10ELabs/instruct` URLs.
+- Homebrew formula metadata now targets `N10ELabs/docwarp` URLs.
 - Project docs now include install instructions for binary and Homebrew flows.

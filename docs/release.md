@@ -18,7 +18,7 @@ Expected workflow behavior:
 - Uploads release assets:
   - binaries
   - `checksums.txt`
-  - `instruct.rb` with per-platform Homebrew checksums
+  - `docwarp.rb` with per-platform Homebrew checksums
 - Runs smoke tests against the published assets on all three OSes.
 
 Manual checks after workflow completion:

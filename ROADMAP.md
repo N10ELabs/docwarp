@@ -1,12 +1,12 @@
-# instruct Roadmap
+# docwarp Roadmap
 
 Last updated: 2026-02-22
 
 ## Current State
 - MVP scaffold is implemented and passes local tests.
 - Bidirectional CLI exists:
-  - `instruct md2docx ...`
-  - `instruct docx2md ...`
+  - `docwarp md2docx ...`
+  - `docwarp docx2md ...`
 - Core model, style-map precedence, warnings, strict mode, and JSON reports are in place.
 - CI/release/homebrew scaffolding exists but release metadata is not finalized.
 - Release plan is now to push through all `P1` and likely `P2` work before publishing `v0.1.0`.
@@ -43,8 +43,11 @@ Last updated: 2026-02-22
 ## Phase 2: Fidelity and Edge Cases (`P0`)
 - [x] Improve table handling for uneven rows and empty cells.
 - [x] Improve list fidelity for mixed ordered/unordered transitions.
+- [x] Preserve nested list hierarchy in round-trips by carrying per-item list levels/types in the core model.
 - [x] Improve inline formatting edge cases (nested emphasis/strong/code/link combinations).
 - [x] Preserve/normalize hard and soft line breaks predictably.
+- [x] Preserve blockquote paragraph breaks (multi-paragraph quote formatting) in markdown round-trips.
+- [x] Preserve fenced code language labels for docwarp-generated DOCX round-trips.
 - [x] Improve image handling:
   - [x] explicit behavior for absolute vs relative paths
   - [x] clearer remote image warning messages
@@ -53,7 +56,7 @@ Last updated: 2026-02-22
 
 ## Phase 3: CLI and Config UX (`P0`)
 - [x] Expand `--help` examples for both commands.
-- [x] Add config examples for `.instruct.yml` in docs.
+- [x] Add config examples for `.docwarp.yml` in docs.
 - [x] Add style-map examples (YAML + JSON) in docs.
 - [x] Add `--strict` behavior examples and CI integration guidance.
 - [x] Add machine-readable report schema documentation.
@@ -70,13 +73,18 @@ Last updated: 2026-02-22
 ## Phase 5: Pre-Release Enhancements (`P1`)
 - [x] Add batch conversion mode (`--glob` or directory input) while keeping single-file mode default.
 - [X] Simplify CLI interface significantly. Take inspiration from great CLI apps like Codex
-- [ ] Work on CLI defaults
-- [ ] Add configs
-- [ ] Add ability to enter passwords for protected documents
-- [ ] add ability to load company templates and style-maps containing company branding and docx styles
-- [ ] Add config profiles for common use cases (e.g., academic, technical, business)
-- [ ] Add compatibility mode flags (for example, stricter markdown output for docs platforms).
-- [ ] Simplify CLI usage with config profiles and short command aliases so common permission-related flags/defaults (for example, remote image policy, strict mode, template/style-map paths) do not need to be repeated.
+- [x] Work on CLI defaults
+  - [x] `docwarp` with no subcommand enters guided mode.
+  - [x] Guided flow supports drag/paste path or native picker.
+  - [x] Input type is auto-detected (`.md` vs `.docx`) and conversion direction selected automatically.
+  - [x] Default output is auto-written next to input without prompting for output path.
+  - [x] Added guided slash-config menu for template/profile/remote-image policy toggles.
+- [x] Add configs
+- [x] Add ability to enter passwords for protected documents
+  - [x] Add `--password` for `docx2md` and guided password prompt immediately after input selection for protected DOCX.
+  - [x] Add protected-file detection and decryption path (requires Python `msoffcrypto-tool` when decrypting encrypted Office containers).
+  - [ ] Test password functionality
+  - [x] Rename project, docs, and crates to `docwarp`
 - [ ] Improve style-map validation with actionable error diagnostics.
 - [x] Improve heading-style fidelity in `md2docx`: preserve Markdown heading levels `h1`-`h6` as distinct DOCX heading styles (or configurable mappings) instead of collapsing `h4`-`h6`.
 - [ ] Native Word equation support for bidirectional `md <-> docx`, including configurable equation style mapping so users do not need manual Insert Equation restyling (for example, statistical-method appendices).
@@ -85,6 +93,8 @@ Last updated: 2026-02-22
 - [ ] Publish `v0.1.0` and changelog.
 
 ## Phase 6: Stretch Pre-Release Scope (`P2`)
+- [ ] Add config profiles for common use cases (e.g., academic, technical, business)
+- [ ] Add ability to load company templates and style-maps containing company branding and docx styles
 - [ ] Footnotes/endnotes.
 - [ ] Headers/footers/page breaks.
 - [ ] Better TOC/section handling.

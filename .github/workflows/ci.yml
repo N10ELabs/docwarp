@@ -30,4 +30,4 @@ jobs:
         run: cargo test --workspace --all-targets
 
       - name: Smoke CLI help
-        run: cargo run -p instruct-cli -- --help
+        run: cargo run -p docwarp-cli -- --help

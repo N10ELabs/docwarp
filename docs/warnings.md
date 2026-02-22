@@ -1,6 +1,6 @@
 # Warning Codes
 
-`instruct` emits stable warning codes in machine-readable reports and CLI summaries.
+`docwarp` emits stable warning codes in machine-readable reports and CLI summaries.
 
 - `unsupported_feature`: Encountered markdown or DOCX content outside MVP support and continued.
 - `image_load_failed`: Could not read a local image or fetch/parse a remote image.

@@ -4,18 +4,18 @@ Describe the release scope and notable user-facing changes.
 
 ## Artifacts
 
-- [ ] `instruct-linux-x86_64`
-- [ ] `instruct-macos-x86_64`
-- [ ] `instruct-macos-aarch64`
-- [ ] `instruct-windows-x86_64.exe`
+- [ ] `docwarp-linux-x86_64`
+- [ ] `docwarp-macos-x86_64`
+- [ ] `docwarp-macos-aarch64`
+- [ ] `docwarp-windows-x86_64.exe`
 - [ ] `checksums.txt`
-- [ ] `instruct.rb` (Homebrew formula with checksums)
+- [ ] `docwarp.rb` (Homebrew formula with checksums)
 
 ## Validation
 
 - [ ] Release workflow completed successfully
 - [ ] Smoke tests passed on Linux/macOS/Windows
-- [ ] `instruct --help` works from downloaded artifacts
+- [ ] `docwarp --help` works from downloaded artifacts
 
 ## Install
 

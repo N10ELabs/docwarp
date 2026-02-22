@@ -6,13 +6,15 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
 use clap::{Parser, Subcommand};
-use glob::Pattern;
-use instruct_core::{
+use docwarp_core::{
     AppConfig, ConversionDirection, ConversionReport, ConversionWarning, Document, StyleMap,
     UnsupportedPolicy, resolve_style_map, style_map,
 };
-use instruct_docx::{DocxReadOptions, DocxWriteOptions, read_docx, write_docx};
-use instruct_md::{parse_markdown, render_markdown};
+use docwarp_docx::{
+    DocxReadOptions, DocxWriteOptions, is_password_protected_docx, read_docx, write_docx,
+};
+use docwarp_md::{parse_markdown, render_markdown};
+use glob::Pattern;
 use walkdir::WalkDir;
 
 const CLI_LONG_ABOUT: &str = "Convert documentation between Markdown and DOCX.\n\
@@ -24,33 +26,34 @@ The tool also supports directional subcommands:\n\
 - docx2md: convert DOCX into Markdown";
 
 const CLI_AFTER_LONG_HELP: &str = "Examples:\n\
-  instruct\n\
-  instruct md2docx ./docs/spec.md --output ./build/spec.docx\n\
-  instruct md2docx ./docs/spec.md --output ./build/spec.docx --strict --report ./build/report.json\n\
-  instruct docx2md ./contracts/master.docx --output ./contracts/master.md --assets-dir ./contracts/assets\n\
+  docwarp\n\
+  docwarp md2docx ./docs/spec.md --output ./build/spec.docx\n\
+  docwarp md2docx ./docs/spec.md --output ./build/spec.docx --strict --report ./build/report.json\n\
+  docwarp docx2md ./contracts/master.docx --output ./contracts/master.md --assets-dir ./contracts/assets\n\
 \n\
 Run command-specific help for detailed examples:\n\
-  instruct md2docx --help\n\
-  instruct docx2md --help";
+  docwarp md2docx --help\n\
+  docwarp docx2md --help";
 
 const MD2DOCX_AFTER_LONG_HELP: &str = "Examples:\n\
-  instruct md2docx ./input.md --output ./output.docx\n\
-  instruct md2docx ./input.md --output ./output.docx --template ./brand.dotx --style-map ./style-map.yml\n\
-  instruct md2docx ./docs --output ./build/docx --glob \"**/*.md\"\n\
-  instruct md2docx ./input.md --output ./output.docx --config ./.instruct.yml\n\
-  instruct md2docx ./input.md --output ./output.docx --report ./report.json --strict\n\
-  instruct md2docx ./input.md --output ./output.docx --allow-remote-images";
+  docwarp md2docx ./input.md --output ./output.docx\n\
+  docwarp md2docx ./input.md --output ./output.docx --template ./brand.dotx --style-map ./style-map.yml\n\
+  docwarp md2docx ./docs --output ./build/docx --glob \"**/*.md\"\n\
+  docwarp md2docx ./input.md --output ./output.docx --config ./.docwarp.yml\n\
+  docwarp md2docx ./input.md --output ./output.docx --report ./report.json --strict\n\
+  docwarp md2docx ./input.md --output ./output.docx --allow-remote-images";
 
 const DOCX2MD_AFTER_LONG_HELP: &str = "Examples:\n\
-  instruct docx2md ./input.docx --output ./output.md\n\
-  instruct docx2md ./input.docx --output ./output.md --assets-dir ./output_assets\n\
-  instruct docx2md ./contracts --output ./build/md --glob \"**/*.docx\"\n\
-  instruct docx2md ./input.docx --output ./output.md --style-map ./style-map.json\n\
-  instruct docx2md ./input.docx --output ./output.md --config ./.instruct.yml --report ./report.json\n\
-  instruct docx2md ./input.docx --output ./output.md --strict";
+  docwarp docx2md ./input.docx --output ./output.md\n\
+  docwarp docx2md ./protected.docx --output ./output.md --password \"secret\"\n\
+  docwarp docx2md ./input.docx --output ./output.md --assets-dir ./output_assets\n\
+  docwarp docx2md ./contracts --output ./build/md --glob \"**/*.docx\"\n\
+  docwarp docx2md ./input.docx --output ./output.md --style-map ./style-map.json\n\
+  docwarp docx2md ./input.docx --output ./output.md --config ./.docwarp.yml --report ./report.json\n\
+  docwarp docx2md ./input.docx --output ./output.md --strict";
 
 #[derive(Debug, Parser)]
-#[command(name = "instruct")]
+#[command(name = "docwarp")]
 #[command(about = "Convert documentation between Markdown and DOCX")]
 #[command(long_about = CLI_LONG_ABOUT)]
 #[command(after_long_help = CLI_AFTER_LONG_HELP)]
@@ -107,6 +110,8 @@ enum Commands {
         #[arg(long)]
         report: Option<PathBuf>,
         #[arg(long)]
+        password: Option<String>,
+        #[arg(long)]
         strict: bool,
     },
 }
@@ -158,9 +163,10 @@ fn run(cli: Cli) -> Result<i32> {
             style_map,
             config,
             report,
+            password,
             strict,
         }) => run_docx2md(
-            input, output, glob, assets_dir, style_map, config, report, strict,
+            input, output, glob, assets_dir, style_map, config, report, password, strict,
         ),
         None => run_guided_mode(),
     }
@@ -168,7 +174,7 @@ fn run(cli: Cli) -> Result<i32> {
 
 fn emit_startup_header() {
     let version = env!("CARGO_PKG_VERSION");
-    let title = format!("instruct (v{version})");
+    let title = format!("docwarp (v{version})");
     let width = title.chars().count();
     let horizontal = "─".repeat(width + 2);
 
@@ -222,6 +228,7 @@ fn run_guided_mode() -> Result<i32> {
     let mut options = GuidedOptions::default();
     let input = prompt_for_input_path(&mut options)?;
     let direction = detect_guided_direction(&input)?;
+    let docx_password = maybe_prompt_guided_docx_password(&input, direction)?;
     let output = default_guided_output_path(&input, direction);
 
     println!();
@@ -242,9 +249,47 @@ fn run_guided_mode() -> Result<i32> {
             false,
             options.allow_remote_images,
         ),
-        GuidedDirection::DocxToMd => {
-            run_docx2md(input, output, None, None, None, None, None, false)
-        }
+        GuidedDirection::DocxToMd => run_docx2md(
+            input,
+            output,
+            None,
+            None,
+            None,
+            None,
+            None,
+            docx_password,
+            false,
+        ),
+    }
+}
+
+fn maybe_prompt_guided_docx_password(
+    input: &Path,
+    direction: GuidedDirection,
+) -> Result<Option<String>> {
+    if !matches!(direction, GuidedDirection::DocxToMd) || !input.is_file() {
+        return Ok(None);
+    }
+
+    if !is_password_protected_docx(input)? {
+        return Ok(None);
+    }
+
+    println!();
+    println!("This DOCX appears to be password-protected.");
+    let password = prompt_password_input("Password: ")?;
+    if password.trim().is_empty() {
+        return Err(anyhow!("password is required to open the selected DOCX"));
+    }
+
+    Ok(Some(password))
+}
+
+fn prompt_password_input(prompt: &str) -> Result<String> {
+    if io::stdin().is_terminal() && io::stdout().is_terminal() {
+        rpassword::prompt_password(prompt).context("failed reading password")
+    } else {
+        prompt_line(prompt)
     }
 }
 
@@ -696,10 +741,10 @@ fn default_guided_output_path(input: &Path, direction: GuidedDirection) -> PathB
     }
 
     let suffix = direction.output_extension();
-    let mut candidate = input.join(format!("instruct-{suffix}"));
+    let mut candidate = input.join(format!("docwarp-{suffix}"));
     let mut index = 2usize;
     while candidate.exists() {
-        candidate = input.join(format!("instruct-{suffix}-{index}"));
+        candidate = input.join(format!("docwarp-{suffix}-{index}"));
         index += 1;
     }
     candidate
@@ -884,6 +929,7 @@ fn run_docx2md(
     cli_style_map_path: Option<PathBuf>,
     config_path: Option<PathBuf>,
     report_path: Option<PathBuf>,
+    password: Option<String>,
     strict_flag: bool,
 ) -> Result<i32> {
     let (config_file, config) = load_config_with_auto_discovery(config_path.as_deref())?;
@@ -908,6 +954,7 @@ fn run_docx2md(
             config.assets_dir.as_deref(),
             &style_map,
             report_path.as_deref(),
+            password.as_deref(),
             strict,
         )?;
         return Ok(exit_code_from_warnings(&warnings, strict));
@@ -938,6 +985,7 @@ fn run_docx2md(
             config.assets_dir.as_deref(),
             &style_map,
             batch_report.as_deref(),
+            password.as_deref(),
             strict,
         ) {
             Ok(warnings) => {
@@ -1028,6 +1076,7 @@ fn convert_docx2md_single(
     config_assets_dir: Option<&Path>,
     style_map: &StyleMap,
     report_path: Option<&Path>,
+    password: Option<&str>,
     strict: bool,
 ) -> Result<Vec<ConversionWarning>> {
     let started = Instant::now();
@@ -1046,6 +1095,7 @@ fn convert_docx2md_single(
         &DocxReadOptions {
             assets_dir: assets_dir.clone(),
             style_map: style_map.clone(),
+            password: password.map(str::to_string),
         },
     )?;
 
@@ -1267,7 +1317,7 @@ fn load_config_with_auto_discovery(path: Option<&Path>) -> Result<(Option<PathBu
         return Ok((Some(path.to_path_buf()), AppConfig::load(path)?));
     }
 
-    let default_path = PathBuf::from(".instruct.yml");
+    let default_path = PathBuf::from(".docwarp.yml");
     if default_path.exists() {
         Ok((Some(default_path.clone()), AppConfig::load(&default_path)?))
     } else {
@@ -1420,20 +1470,20 @@ fn resolve_output_relative_path(output_parent: &Path, path: PathBuf) -> PathBuf 
 fn rewrite_image_paths_relative_to_output(document: &mut Document, output_parent: &Path) {
     for block in &mut document.blocks {
         match block {
-            instruct_core::Block::Paragraph(inlines)
-            | instruct_core::Block::BlockQuote(inlines)
-            | instruct_core::Block::Title(inlines)
-            | instruct_core::Block::Heading {
+            docwarp_core::Block::Paragraph(inlines)
+            | docwarp_core::Block::BlockQuote(inlines)
+            | docwarp_core::Block::Title(inlines)
+            | docwarp_core::Block::Heading {
                 content: inlines, ..
             } => {
                 rewrite_inline_paths(inlines, output_parent);
             }
-            instruct_core::Block::List { items, .. } => {
+            docwarp_core::Block::List { items, .. } => {
                 for item in items {
                     rewrite_inline_paths(item, output_parent);
                 }
             }
-            instruct_core::Block::Table { headers, rows } => {
+            docwarp_core::Block::Table { headers, rows } => {
                 for cell in headers {
                     rewrite_inline_paths(cell, output_parent);
                 }
@@ -1443,32 +1493,32 @@ fn rewrite_image_paths_relative_to_output(document: &mut Document, output_parent
                     }
                 }
             }
-            instruct_core::Block::Image { src, .. } => {
+            docwarp_core::Block::Image { src, .. } => {
                 if let Ok(rel) = make_relative_if_absolute(src, output_parent) {
                     *src = rel;
                 }
             }
-            instruct_core::Block::CodeBlock { .. } | instruct_core::Block::ThematicBreak => {}
+            docwarp_core::Block::CodeBlock { .. } | docwarp_core::Block::ThematicBreak => {}
         }
     }
 }
 
-fn rewrite_inline_paths(inlines: &mut [instruct_core::Inline], output_parent: &Path) {
+fn rewrite_inline_paths(inlines: &mut [docwarp_core::Inline], output_parent: &Path) {
     for inline in inlines {
         match inline {
-            instruct_core::Inline::Image { src, .. } => {
+            docwarp_core::Inline::Image { src, .. } => {
                 if let Ok(rel) = make_relative_if_absolute(src, output_parent) {
                     *src = rel;
                 }
             }
-            instruct_core::Inline::Emphasis(children)
-            | instruct_core::Inline::Strong(children)
-            | instruct_core::Inline::Link { text: children, .. } => {
+            docwarp_core::Inline::Emphasis(children)
+            | docwarp_core::Inline::Strong(children)
+            | docwarp_core::Inline::Link { text: children, .. } => {
                 rewrite_inline_paths(children, output_parent)
             }
-            instruct_core::Inline::Text(_)
-            | instruct_core::Inline::Code(_)
-            | instruct_core::Inline::LineBreak => {}
+            docwarp_core::Inline::Text(_)
+            | docwarp_core::Inline::Code(_)
+            | docwarp_core::Inline::LineBreak => {}
         }
     }
 }

@@ -15,23 +15,23 @@ linux_x86_sha="$6"
 output_path="$7"
 
 cat >"$output_path" <<EOF
-class Instruct < Formula
+class Docwarp < Formula
   desc "Bidirectional Markdown <-> DOCX converter"
   homepage "https://github.com/${owner}/${repo}"
   version "${version}"
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/${owner}/${repo}/releases/download/v#{version}/instruct-macos-aarch64"
+      url "https://github.com/${owner}/${repo}/releases/download/v#{version}/docwarp-macos-aarch64"
       sha256 "${macos_arm_sha}"
     else
-      url "https://github.com/${owner}/${repo}/releases/download/v#{version}/instruct-macos-x86_64"
+      url "https://github.com/${owner}/${repo}/releases/download/v#{version}/docwarp-macos-x86_64"
       sha256 "${macos_x86_sha}"
     end
   end
 
   on_linux do
-    url "https://github.com/${owner}/${repo}/releases/download/v#{version}/instruct-linux-x86_64"
+    url "https://github.com/${owner}/${repo}/releases/download/v#{version}/docwarp-linux-x86_64"
     sha256 "${linux_x86_sha}"
   end
 
@@ -39,11 +39,11 @@ class Instruct < Formula
     artifact = Dir["*"].find { |f| File.file?(f) }
     raise "expected a single release artifact" if artifact.nil?
 
-    bin.install artifact => "instruct"
+    bin.install artifact => "docwarp"
   end
 
   test do
-    assert_match "Convert documentation", shell_output("#{bin}/instruct --help")
+    assert_match "Convert documentation", shell_output("#{bin}/docwarp --help")
   end
 end
 EOF

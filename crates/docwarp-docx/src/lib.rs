@@ -1,11 +1,12 @@
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::process;
 
 use anyhow::{Context, Result, anyhow};
-use instruct_core::{
+use docwarp_core::{
     Block, ConversionWarning, Document, Inline, StyleMap, WarningCode, model::inline_text,
 };
 use quick_xml::Reader;
@@ -20,7 +21,8 @@ const PACKAGE_REL_NS: &str = "http://schemas.openxmlformats.org/package/2006/rel
 const CONTENT_TYPES_NS: &str = "http://schemas.openxmlformats.org/package/2006/content-types";
 const LIST_BASE_INDENT_TWIPS: u32 = 720;
 const LIST_INDENT_STEP_TWIPS: u32 = 360;
-const CODE_LANG_MARKER_PREFIX: &str = "[[instruct-code-lang:";
+const CODE_LANG_MARKER_PREFIX: &str = "[[docwarp-code-lang:";
+const LEGACY_CODE_LANG_MARKER_PREFIX: &str = "[[instruct-code-lang:";
 const CODE_LANG_MARKER_SUFFIX: &str = "]]";
 
 #[derive(Debug, Clone)]
@@ -34,6 +36,7 @@ pub struct DocxWriteOptions {
 pub struct DocxReadOptions {
     pub assets_dir: PathBuf,
     pub style_map: StyleMap,
+    pub password: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1178,12 +1181,12 @@ fn build_document_relationships_xml(relationships: &[Relationship]) -> Vec<u8> {
 
 fn build_core_properties_xml() -> Vec<u8> {
     "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>
-<cp:coreProperties xmlns:cp=\"http://schemas.openxmlformats.org/package/2006/metadata/core-properties\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:dcterms=\"http://purl.org/dc/terms/\" xmlns:dcmitype=\"http://purl.org/dc/dcmitype/\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"><dc:title>instruct output</dc:title><dc:creator>instruct</dc:creator></cp:coreProperties>".as_bytes().to_vec()
+<cp:coreProperties xmlns:cp=\"http://schemas.openxmlformats.org/package/2006/metadata/core-properties\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:dcterms=\"http://purl.org/dc/terms/\" xmlns:dcmitype=\"http://purl.org/dc/dcmitype/\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"><dc:title>docwarp output</dc:title><dc:creator>docwarp</dc:creator></cp:coreProperties>".as_bytes().to_vec()
 }
 
 fn build_app_properties_xml() -> Vec<u8> {
     "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>
-<Properties xmlns=\"http://schemas.openxmlformats.org/officeDocument/2006/extended-properties\" xmlns:vt=\"http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes\"><Application>instruct</Application></Properties>".as_bytes().to_vec()
+<Properties xmlns=\"http://schemas.openxmlformats.org/officeDocument/2006/extended-properties\" xmlns:vt=\"http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes\"><Application>docwarp</Application></Properties>".as_bytes().to_vec()
 }
 
 pub fn read_docx(
@@ -1192,7 +1195,34 @@ pub fn read_docx(
 ) -> Result<(Document, Vec<ConversionWarning>)> {
     let mut warnings = Vec::new();
 
-    let file = fs::File::open(input_path)
+    let password = options
+        .password
+        .as_deref()
+        .map(str::trim)
+        .filter(|p| !p.is_empty());
+    let is_password_protected = is_password_protected_docx(input_path)?;
+    if is_password_protected && password.is_none() {
+        return Err(anyhow!(
+            "DOCX appears password-protected. Re-run with --password or guided mode password prompt."
+        ));
+    }
+
+    let mut _decrypted_tempdir = None;
+    let archive_input_path = if is_password_protected {
+        let tempdir = tempfile::tempdir().context("failed creating temporary decrypt directory")?;
+        let decrypted_path = tempdir.path().join("decrypted.docx");
+        decrypt_password_protected_docx(
+            input_path,
+            &decrypted_path,
+            password.expect("password is required for protected DOCX"),
+        )?;
+        _decrypted_tempdir = Some(tempdir);
+        decrypted_path
+    } else {
+        input_path.to_path_buf()
+    };
+
+    let file = fs::File::open(&archive_input_path)
         .with_context(|| format!("failed opening DOCX file: {}", input_path.display()))?;
     let mut archive = ZipArchive::new(file).context("failed opening DOCX zip archive")?;
 
@@ -1446,6 +1476,101 @@ pub fn read_docx(
     flush_pending_list(&mut pending_list, &mut blocks);
 
     Ok((Document { blocks }, warnings))
+}
+
+pub fn is_password_protected_docx(input_path: &Path) -> Result<bool> {
+    let mut file = fs::File::open(input_path)
+        .with_context(|| format!("failed opening DOCX file: {}", input_path.display()))?;
+    let mut magic = [0_u8; 8];
+    let read = file
+        .read(&mut magic)
+        .with_context(|| format!("failed reading DOCX header: {}", input_path.display()))?;
+    if read < magic.len() {
+        return Ok(false);
+    }
+
+    Ok(magic == [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1])
+}
+
+fn decrypt_password_protected_docx(
+    input_path: &Path,
+    output_path: &Path,
+    password: &str,
+) -> Result<()> {
+    let script = r#"
+import os
+import sys
+
+try:
+    import msoffcrypto
+except Exception:
+    sys.stderr.write("python module 'msoffcrypto' is not installed")
+    sys.exit(3)
+
+input_path = sys.argv[1]
+output_path = sys.argv[2]
+password = os.environ.get("DOCWARP_DOCX_PASSWORD", "")
+
+try:
+    with open(input_path, "rb") as source:
+        office = msoffcrypto.OfficeFile(source)
+        office.load_key(password=password)
+        with open(output_path, "wb") as target:
+            office.decrypt(target)
+except Exception as exc:
+    message = str(exc)
+    sys.stderr.write(message)
+    if "password" in message.lower():
+        sys.exit(4)
+    sys.exit(2)
+"#;
+
+    let mut last_failure = None;
+    for python in ["python3", "python"] {
+        let output = match process::Command::new(python)
+            .arg("-c")
+            .arg(script)
+            .arg(input_path)
+            .arg(output_path)
+            .env("DOCWARP_DOCX_PASSWORD", password)
+            .output()
+        {
+            Ok(output) => output,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
+            Err(err) => {
+                last_failure = Some(anyhow!("failed launching {python}: {err}"));
+                continue;
+            }
+        };
+
+        if output.status.success() {
+            return Ok(());
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let details = if !stderr.is_empty() { stderr } else { stdout };
+
+        match output.status.code() {
+            Some(3) => {
+                return Err(anyhow!(
+                    "password-protected DOCX support requires Python package 'msoffcrypto-tool' (install with: pip install msoffcrypto-tool)"
+                ));
+            }
+            Some(4) => {
+                return Err(anyhow!("incorrect DOCX password"));
+            }
+            _ => {
+                last_failure = Some(anyhow!(
+                    "failed decrypting password-protected DOCX with {python}: {details}"
+                ));
+            }
+        }
+    }
+
+    Err(last_failure.unwrap_or_else(|| {
+        anyhow!("unable to decrypt password-protected DOCX: python3/python not found")
+    }))
 }
 
 fn read_relationships<R: Read + std::io::Seek>(
@@ -1730,23 +1855,27 @@ fn list_level_from_indent(item_indent_left: u32, base_indent_left: u32) -> u8 {
 }
 
 fn extract_code_language_marker(raw: String) -> (Option<String>, String) {
-    let Some(without_prefix) = raw.strip_prefix(CODE_LANG_MARKER_PREFIX) else {
-        return (None, raw);
-    };
+    parse_code_language_marker(&raw, CODE_LANG_MARKER_PREFIX)
+        .or_else(|| parse_code_language_marker(&raw, LEGACY_CODE_LANG_MARKER_PREFIX))
+        .unwrap_or((None, raw))
+}
+
+fn parse_code_language_marker(raw: &str, prefix: &str) -> Option<(Option<String>, String)> {
+    let without_prefix = raw.strip_prefix(prefix)?;
 
     let Some(end) = without_prefix.find(CODE_LANG_MARKER_SUFFIX) else {
-        return (None, raw);
+        return Some((None, raw.to_string()));
     };
 
     let language = without_prefix[..end].trim();
     let code_start = end + CODE_LANG_MARKER_SUFFIX.len();
     let code = without_prefix[code_start..].to_string();
 
-    if language.is_empty() {
+    Some(if language.is_empty() {
         (None, code)
     } else {
         (Some(language.to_string()), code)
-    }
+    })
 }
 
 fn normalize_docx_target(target: &str) -> String {
@@ -1806,6 +1935,46 @@ mod tests {
     }
 
     #[test]
+    fn detects_cfb_header_as_password_protected_docx() {
+        let dir = tempdir().expect("tempdir should be created");
+        let cfb_path = dir.path().join("encrypted.docx");
+        fs::write(
+            &cfb_path,
+            [0xD0_u8, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1, 0x00],
+        )
+        .expect("signature file should be written");
+
+        let detected =
+            is_password_protected_docx(&cfb_path).expect("header detection should succeed");
+        assert!(detected);
+    }
+
+    #[test]
+    fn regular_docx_is_not_marked_password_protected() {
+        let dir = tempdir().expect("tempdir should be created");
+        let output_docx = dir.path().join("plain.docx");
+        let doc = Document {
+            blocks: vec![Block::Paragraph(vec![Inline::Text("plain".into())])],
+        };
+
+        write_docx(
+            &doc,
+            dir.path(),
+            &output_docx,
+            &DocxWriteOptions {
+                allow_remote_images: false,
+                style_map: StyleMap::builtin(),
+                template: None,
+            },
+        )
+        .expect("DOCX write should succeed");
+
+        let detected =
+            is_password_protected_docx(&output_docx).expect("header detection should succeed");
+        assert!(!detected);
+    }
+
+    #[test]
     fn write_and_read_docx_roundtrip_core_blocks() {
         let dir = tempdir().expect("tempdir should be created");
         let image_path = dir.path().join("image.png");
@@ -1853,6 +2022,7 @@ mod tests {
             &DocxReadOptions {
                 assets_dir: output_assets,
                 style_map: StyleMap::builtin(),
+                password: None,
             },
         )
         .expect("DOCX read should succeed");
@@ -1908,6 +2078,7 @@ mod tests {
             &DocxReadOptions {
                 assets_dir: dir.path().join("assets"),
                 style_map: StyleMap::builtin(),
+                password: None,
             },
         )
         .expect("DOCX read should succeed");
@@ -1963,6 +2134,7 @@ mod tests {
             &DocxReadOptions {
                 assets_dir: dir.path().join("assets"),
                 style_map: StyleMap::builtin(),
+                password: None,
             },
         )
         .expect("DOCX read should succeed");
@@ -2011,6 +2183,7 @@ mod tests {
             &DocxReadOptions {
                 assets_dir: dir.path().join("assets"),
                 style_map: StyleMap::builtin(),
+                password: None,
             },
         )
         .expect("DOCX read should succeed");
@@ -2022,6 +2195,15 @@ mod tests {
 
         assert_eq!(language.as_deref(), Some("rust"));
         assert_eq!(code, "fn main() {\n    println!(\"hi\");\n}");
+    }
+
+    #[test]
+    fn extract_code_language_marker_accepts_legacy_prefix() {
+        let raw = "[[instruct-code-lang:rust]]fn main() {}".to_string();
+        let (language, code) = super::extract_code_language_marker(raw);
+
+        assert_eq!(language.as_deref(), Some("rust"));
+        assert_eq!(code, "fn main() {}");
     }
 
     #[test]
@@ -2488,6 +2670,7 @@ mod tests {
             &DocxReadOptions {
                 assets_dir: dir.path().join("assets"),
                 style_map: StyleMap::builtin(),
+                password: None,
             },
         )
         .expect("DOCX read should succeed");

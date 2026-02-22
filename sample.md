@@ -1,11 +1,11 @@
-# Instruct Sample Document
+# Docwarp Sample Document
 
 This is a sample Markdown file for testing DOCX conversion.
 
 ## Overview
 
-- Convert Markdown to DOCX with `instruct md2docx`
-- Convert DOCX back to Markdown with `instruct docx2md`
+- Convert Markdown to DOCX with `docwarp md2docx`
+- Convert DOCX back to Markdown with `docwarp docx2md`
 - Use `--strict` to fail on warnings
 
 ## Notes

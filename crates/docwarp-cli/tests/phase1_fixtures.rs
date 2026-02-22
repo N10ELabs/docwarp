@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use anyhow::{Context, Result, bail};
-use instruct_core::{Block, Document, Inline, StyleMap};
-use instruct_docx::{DocxReadOptions, read_docx};
+use docwarp_core::{Block, Document, Inline, StyleMap};
+use docwarp_docx::{DocxReadOptions, read_docx};
 use tempfile::tempdir;
 
 const FIXTURE_BASENAMES: [&str; 10] = [
@@ -59,7 +59,7 @@ fn md_to_docx_matches_golden_structure() -> Result<()> {
         let golden_docx = root.join("fixtures/docx").join(format!("{base}.docx"));
         let generated_docx = temp.path().join(format!("{base}.docx"));
 
-        let output = Command::new(env!("CARGO_BIN_EXE_instruct"))
+        let output = Command::new(env!("CARGO_BIN_EXE_docwarp"))
             .arg("md2docx")
             .arg(&md_input)
             .arg("--output")
@@ -73,6 +73,7 @@ fn md_to_docx_matches_golden_structure() -> Result<()> {
             &DocxReadOptions {
                 assets_dir: temp.path().join(format!("generated-assets-{base}")),
                 style_map: StyleMap::builtin(),
+                password: None,
             },
         )
         .with_context(|| format!("failed reading generated DOCX for fixture {base}"))?
@@ -83,6 +84,7 @@ fn md_to_docx_matches_golden_structure() -> Result<()> {
             &DocxReadOptions {
                 assets_dir: temp.path().join(format!("golden-assets-{base}")),
                 style_map: StyleMap::builtin(),
+                password: None,
             },
         )
         .with_context(|| format!("failed reading golden DOCX fixture {base}"))?
@@ -112,7 +114,7 @@ fn docx_to_md_matches_golden_markdown() -> Result<()> {
             .join(format!("{base}.md"));
         let output_md = temp.path().join(format!("{base}.md"));
 
-        let output = Command::new(env!("CARGO_BIN_EXE_instruct"))
+        let output = Command::new(env!("CARGO_BIN_EXE_docwarp"))
             .arg("docx2md")
             .arg(&docx_input)
             .arg("--output")

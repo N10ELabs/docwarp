@@ -4,7 +4,7 @@ use std::path::Path;
 use std::process::{Command, Output};
 
 use anyhow::{Context, Result, bail};
-use instruct_md::parse_markdown;
+use docwarp_md::parse_markdown;
 use tempfile::tempdir;
 use zip::ZipWriter;
 use zip::read::ZipArchive;
@@ -23,7 +23,7 @@ fn mixed_list_type_transitions_survive_md_docx_md_roundtrip() -> Result<()> {
     )
     .context("failed writing input markdown")?;
 
-    let md2docx = run_instruct([
+    let md2docx = run_docwarp([
         "md2docx",
         input.to_string_lossy().as_ref(),
         "--output",
@@ -31,7 +31,7 @@ fn mixed_list_type_transitions_survive_md_docx_md_roundtrip() -> Result<()> {
     ])?;
     assert_command_status(&md2docx, Some(0), "md2docx should succeed")?;
 
-    let docx2md = run_instruct([
+    let docx2md = run_docwarp([
         "docx2md",
         docx.to_string_lossy().as_ref(),
         "--output",
@@ -53,7 +53,7 @@ fn mixed_list_type_transitions_survive_md_docx_md_roundtrip() -> Result<()> {
         .blocks
         .iter()
         .filter_map(|block| {
-            if let instruct_core::Block::List { ordered, .. } = block {
+            if let docwarp_core::Block::List { ordered, .. } = block {
                 Some(*ordered)
             } else {
                 None
@@ -73,7 +73,7 @@ fn remote_images_are_blocked_by_default_without_network_fetch() -> Result<()> {
     fs::write(&input, "![remote](https://example.invalid/image.png)\n")
         .context("failed writing markdown input")?;
 
-    let run = run_instruct([
+    let run = run_docwarp([
         "md2docx",
         input.to_string_lossy().as_ref(),
         "--output",
@@ -111,7 +111,7 @@ fn missing_relative_and_absolute_images_explain_resolution_behavior() -> Result<
     );
     fs::write(&input, markdown).context("failed writing markdown input")?;
 
-    let run = run_instruct([
+    let run = run_docwarp([
         "md2docx",
         input.to_string_lossy().as_ref(),
         "--output",
@@ -149,7 +149,7 @@ fn dotx_template_is_applied_and_invalid_template_falls_back() -> Result<()> {
     )?;
 
     let output_ok = temp.path().join("ok.docx");
-    let ok_run = run_instruct([
+    let ok_run = run_docwarp([
         "md2docx",
         input.to_string_lossy().as_ref(),
         "--output",
@@ -168,7 +168,7 @@ fn dotx_template_is_applied_and_invalid_template_falls_back() -> Result<()> {
     write_invalid_template_zip(&broken_template)?;
 
     let output_fallback = temp.path().join("fallback.docx");
-    let fallback_run = run_instruct([
+    let fallback_run = run_docwarp([
         "md2docx",
         input.to_string_lossy().as_ref(),
         "--output",
@@ -196,11 +196,11 @@ fn dotx_template_is_applied_and_invalid_template_falls_back() -> Result<()> {
     Ok(())
 }
 
-fn run_instruct<const N: usize>(args: [&str; N]) -> Result<Output> {
-    Command::new(env!("CARGO_BIN_EXE_instruct"))
+fn run_docwarp<const N: usize>(args: [&str; N]) -> Result<Output> {
+    Command::new(env!("CARGO_BIN_EXE_docwarp"))
         .args(args)
         .output()
-        .context("failed running instruct")
+        .context("failed running docwarp")
 }
 
 fn assert_command_status(output: &Output, expected: Option<i32>, label: &str) -> Result<()> {

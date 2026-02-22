@@ -1,5 +1,5 @@
 [package]
-name = "instruct-docx"
+name = "docwarp-docx"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,7 +9,7 @@ anyhow.workspace = true
 quick-xml.workspace = true
 zip.workspace = true
 reqwest.workspace = true
-instruct-core = { path = "../instruct-core" }
+docwarp-core = { path = "../docwarp-core" }
+tempfile.workspace = true
 
 [dev-dependencies]
-tempfile.workspace = true

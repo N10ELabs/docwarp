@@ -6,10 +6,10 @@ This page covers installation from published release artifacts.
 
 Pick the artifact for your platform from the GitHub release:
 
-- macOS Apple Silicon: `instruct-macos-aarch64`
-- macOS Intel: `instruct-macos-x86_64`
-- Linux x86_64: `instruct-linux-x86_64`
-- Windows x86_64: `instruct-windows-x86_64.exe`
+- macOS Apple Silicon: `docwarp-macos-aarch64`
+- macOS Intel: `docwarp-macos-x86_64`
+- Linux x86_64: `docwarp-linux-x86_64`
+- Windows x86_64: `docwarp-windows-x86_64.exe`
 
 You can verify downloaded files with `checksums.txt` from the same release.
 
@@ -17,39 +17,39 @@ You can verify downloaded files with `checksums.txt` from the same release.
 
 ```bash
 # Example: Linux x86_64
-curl -fL -o instruct \
-  https://github.com/N10ELabs/instruct/releases/download/v0.1.0/instruct-linux-x86_64
+curl -fL -o docwarp \
+  https://github.com/N10ELabs/docwarp/releases/download/v0.1.0/docwarp-linux-x86_64
 
-chmod +x ./instruct
-./instruct --help
+chmod +x ./docwarp
+./docwarp --help
 ```
 
 ### Windows (PowerShell)
 
 ```powershell
 Invoke-WebRequest `
-  -Uri "https://github.com/N10ELabs/instruct/releases/download/v0.1.0/instruct-windows-x86_64.exe" `
-  -OutFile ".\instruct.exe"
+  -Uri "https://github.com/N10ELabs/docwarp/releases/download/v0.1.0/docwarp-windows-x86_64.exe" `
+  -OutFile ".\docwarp.exe"
 
-.\instruct.exe --help
+.\docwarp.exe --help
 ```
 
 ## Homebrew Tap
 
-`instruct` publishes a Homebrew formula as release asset `instruct.rb` with release-specific checksums.
+`docwarp` publishes a Homebrew formula as release asset `docwarp.rb` with release-specific checksums.
 
 Install via tap:
 
 ```bash
-brew tap N10ELabs/instruct https://github.com/N10ELabs/instruct
-brew install instruct
+brew tap N10ELabs/docwarp https://github.com/N10ELabs/docwarp
+brew install docwarp
 ```
 
 If you need to install from a specific release formula file:
 
 ```bash
-curl -fL -o instruct.rb \
-  https://github.com/N10ELabs/instruct/releases/download/v0.1.0/instruct.rb
+curl -fL -o docwarp.rb \
+  https://github.com/N10ELabs/docwarp/releases/download/v0.1.0/docwarp.rb
 
-brew install --formula ./instruct.rb
+brew install --formula ./docwarp.rb
 ```

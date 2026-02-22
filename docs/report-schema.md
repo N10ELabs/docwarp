@@ -1,6 +1,6 @@
 # JSON Report Schema
 
-When `--report <path>` is provided, `instruct` writes a machine-readable JSON report.
+When `--report <path>` is provided, `docwarp` writes a machine-readable JSON report.
 
 Current schema version: `1.0.0`
 

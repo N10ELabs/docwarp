@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use anyhow::{Context, Result, bail};
-use instruct_core::{Block, Document, Inline, StyleMap, WarningCode};
-use instruct_docx::{DocxReadOptions, read_docx};
-use instruct_md::parse_markdown;
+use docwarp_core::{Block, Document, Inline, StyleMap, WarningCode};
+use docwarp_docx::{DocxReadOptions, read_docx};
+use docwarp_md::parse_markdown;
 use tempfile::tempdir;
 use zip::ZipWriter;
 use zip::read::ZipArchive;
@@ -42,7 +42,7 @@ fn roundtrip_md_docx_md_preserves_structure() -> Result<()> {
         let roundtrip_docx = temp.path().join(format!("{base}.docx"));
         let roundtrip_md = temp.path().join(format!("{base}.roundtrip.md"));
 
-        let md2docx = run_instruct([
+        let md2docx = run_docwarp([
             "md2docx",
             input_md_path.to_string_lossy().as_ref(),
             "--output",
@@ -54,7 +54,7 @@ fn roundtrip_md_docx_md_preserves_structure() -> Result<()> {
             &format!("md2docx roundtrip setup {base}"),
         )?;
 
-        let docx2md = run_instruct([
+        let docx2md = run_docwarp([
             "docx2md",
             roundtrip_docx.to_string_lossy().as_ref(),
             "--output",
@@ -97,12 +97,13 @@ fn roundtrip_docx_md_docx_preserves_structure() -> Result<()> {
             &DocxReadOptions {
                 assets_dir: temp.path().join(format!("assets-original-{base}")),
                 style_map: StyleMap::builtin(),
+                password: None,
             },
         )
         .with_context(|| format!("failed reading original DOCX fixture {base}"))?
         .0;
 
-        let docx2md = run_instruct([
+        let docx2md = run_docwarp([
             "docx2md",
             input_docx.to_string_lossy().as_ref(),
             "--output",
@@ -116,7 +117,7 @@ fn roundtrip_docx_md_docx_preserves_structure() -> Result<()> {
             &format!("docx2md roundtrip setup {base}"),
         )?;
 
-        let md2docx = run_instruct([
+        let md2docx = run_docwarp([
             "md2docx",
             output_md.to_string_lossy().as_ref(),
             "--output",
@@ -129,6 +130,7 @@ fn roundtrip_docx_md_docx_preserves_structure() -> Result<()> {
             &DocxReadOptions {
                 assets_dir: temp.path().join(format!("assets-roundtrip-{base}")),
                 style_map: StyleMap::builtin(),
+                password: None,
             },
         )
         .with_context(|| format!("failed reading roundtrip DOCX for fixture {base}"))?
@@ -154,7 +156,7 @@ fn strict_mode_returns_exit_code_2_on_warnings() -> Result<()> {
     fs::write(&input, "![Remote](https://example.com/image.png)\n")
         .context("failed writing markdown input")?;
 
-    let run = run_instruct([
+    let run = run_docwarp([
         "md2docx",
         input.to_string_lossy().as_ref(),
         "--output",
@@ -179,7 +181,7 @@ fn corrupt_docx_returns_fatal_error() -> Result<()> {
     let output = temp.path().join("out.md");
     fs::write(&input, b"not a valid docx zip").context("failed writing corrupt DOCX")?;
 
-    let run = run_instruct([
+    let run = run_docwarp([
         "docx2md",
         input.to_string_lossy().as_ref(),
         "--output",
@@ -206,7 +208,7 @@ fn missing_media_emits_warning() -> Result<()> {
     remove_docx_entry(&source_docx, &broken_docx, "word/media/image1.png")?;
 
     let output_md = temp.path().join("out.md");
-    let run = run_instruct([
+    let run = run_docwarp([
         "docx2md",
         broken_docx.to_string_lossy().as_ref(),
         "--output",
@@ -235,7 +237,7 @@ fn invalid_style_map_returns_fatal_error() -> Result<()> {
     fs::write(&input, "# Title\n\nBody\n").context("failed writing markdown")?;
     fs::write(&style_map, "docx_to_md: [\n").context("failed writing invalid style-map fixture")?;
 
-    let run = run_instruct([
+    let run = run_docwarp([
         "md2docx",
         input.to_string_lossy().as_ref(),
         "--output",
@@ -262,7 +264,7 @@ fn invalid_template_in_strict_mode_exits_with_2_and_warning() -> Result<()> {
 
     fs::write(&input, "# Title\n\nBody\n").context("failed writing markdown")?;
 
-    let run = run_instruct([
+    let run = run_docwarp([
         "md2docx",
         input.to_string_lossy().as_ref(),
         "--output",
@@ -308,7 +310,7 @@ fn md_to_docx_output_is_deterministic() -> Result<()> {
     let out_a = temp.path().join("a.docx");
     let out_b = temp.path().join("b.docx");
 
-    let first = run_instruct([
+    let first = run_docwarp([
         "md2docx",
         input.to_string_lossy().as_ref(),
         "--output",
@@ -316,7 +318,7 @@ fn md_to_docx_output_is_deterministic() -> Result<()> {
     ])?;
     assert_command_status(&first, Some(0), "first deterministic md2docx run")?;
 
-    let second = run_instruct([
+    let second = run_docwarp([
         "md2docx",
         input.to_string_lossy().as_ref(),
         "--output",
@@ -338,11 +340,11 @@ fn workspace_root() -> PathBuf {
         .expect("workspace root should be resolvable")
 }
 
-fn run_instruct<const N: usize>(args: [&str; N]) -> Result<Output> {
-    Command::new(env!("CARGO_BIN_EXE_instruct"))
+fn run_docwarp<const N: usize>(args: [&str; N]) -> Result<Output> {
+    Command::new(env!("CARGO_BIN_EXE_docwarp"))
         .args(args)
         .output()
-        .context("failed running instruct")
+        .context("failed running docwarp")
 }
 
 fn assert_command_status(output: &Output, expected: Option<i32>, label: &str) -> Result<()> {

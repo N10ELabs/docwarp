@@ -23,7 +23,7 @@ fn md2docx_directory_input_converts_markdown_tree() -> Result<()> {
         "--output".to_string(),
         output_root.to_string_lossy().into_owned(),
     ];
-    let run = run_instruct(&args)?;
+    let run = run_docwarp(&args)?;
     assert_command_status(&run, Some(0), "batch md2docx should succeed")?;
 
     assert!(output_root.join("root.docx").is_file());
@@ -53,7 +53,7 @@ fn docx2md_batch_glob_filters_inputs() -> Result<()> {
         "--output".to_string(),
         top_docx.to_string_lossy().into_owned(),
     ];
-    let top_build = run_instruct(&top_build_args)?;
+    let top_build = run_docwarp(&top_build_args)?;
     assert_command_status(&top_build, Some(0), "setup top docx should succeed")?;
 
     let inner_docx = docx_root.join("nested/inner.docx");
@@ -66,7 +66,7 @@ fn docx2md_batch_glob_filters_inputs() -> Result<()> {
         "--output".to_string(),
         inner_docx.to_string_lossy().into_owned(),
     ];
-    let inner_build = run_instruct(&inner_build_args)?;
+    let inner_build = run_docwarp(&inner_build_args)?;
     assert_command_status(&inner_build, Some(0), "setup inner docx should succeed")?;
 
     let batch_args = vec![
@@ -77,7 +77,7 @@ fn docx2md_batch_glob_filters_inputs() -> Result<()> {
         "--glob".to_string(),
         "nested/*.docx".to_string(),
     ];
-    let batch_run = run_instruct(&batch_args)?;
+    let batch_run = run_docwarp(&batch_args)?;
     assert_command_status(
         &batch_run,
         Some(0),
@@ -110,7 +110,7 @@ fn batch_strict_mode_returns_exit_code_2_when_warnings_exist() -> Result<()> {
         output_root.to_string_lossy().into_owned(),
         "--strict".to_string(),
     ];
-    let run = run_instruct(&args)?;
+    let run = run_docwarp(&args)?;
     assert_command_status(
         &run,
         Some(2),
@@ -138,17 +138,17 @@ fn glob_requires_directory_input() -> Result<()> {
         "--glob".to_string(),
         "*.md".to_string(),
     ];
-    let run = run_instruct(&args)?;
+    let run = run_docwarp(&args)?;
     assert_command_status(&run, Some(1), "glob should fail for file input")?;
     assert!(stderr_text(&run).contains("--glob requires a directory input path"));
     Ok(())
 }
 
-fn run_instruct(args: &[String]) -> Result<Output> {
-    Command::new(env!("CARGO_BIN_EXE_instruct"))
+fn run_docwarp(args: &[String]) -> Result<Output> {
+    Command::new(env!("CARGO_BIN_EXE_docwarp"))
         .args(args)
         .output()
-        .context("failed running instruct")
+        .context("failed running docwarp")
 }
 
 fn assert_command_status(output: &Output, expected: Option<i32>, label: &str) -> Result<()> {

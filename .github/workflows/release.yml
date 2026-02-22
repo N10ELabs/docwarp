@@ -26,16 +26,16 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            artifact: instruct-linux-x86_64
+            artifact: docwarp-linux-x86_64
           - os: macos-latest
             target: x86_64-apple-darwin
-            artifact: instruct-macos-x86_64
+            artifact: docwarp-macos-x86_64
           - os: macos-latest
             target: aarch64-apple-darwin
-            artifact: instruct-macos-aarch64
+            artifact: docwarp-macos-aarch64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            artifact: instruct-windows-x86_64.exe
+            artifact: docwarp-windows-x86_64.exe
 
     steps:
       - name: Checkout
@@ -50,20 +50,20 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build release
-        run: cargo build --release --target ${{ matrix.target }} -p instruct-cli
+        run: cargo build --release --target ${{ matrix.target }} -p docwarp-cli
 
       - name: Prepare artifact (unix)
         if: runner.os != 'Windows'
         run: |
           mkdir -p dist
-          cp target/${{ matrix.target }}/release/instruct dist/${{ matrix.artifact }}
+          cp target/${{ matrix.target }}/release/docwarp dist/${{ matrix.artifact }}
 
       - name: Prepare artifact (windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist
-          Copy-Item "target/${{ matrix.target }}/release/instruct.exe" "dist/${{ matrix.artifact }}"
+          Copy-Item "target/${{ matrix.target }}/release/docwarp.exe" "dist/${{ matrix.artifact }}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -115,7 +115,7 @@ jobs:
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: instruct-*
+          pattern: docwarp-*
           merge-multiple: true
           path: dist
 
@@ -125,14 +125,14 @@ jobs:
           set -euo pipefail
           ls -la dist
 
-          sha256sum dist/instruct-linux-x86_64 > dist/checksums.txt
-          sha256sum dist/instruct-macos-x86_64 >> dist/checksums.txt
-          sha256sum dist/instruct-macos-aarch64 >> dist/checksums.txt
-          sha256sum dist/instruct-windows-x86_64.exe >> dist/checksums.txt
+          sha256sum dist/docwarp-linux-x86_64 > dist/checksums.txt
+          sha256sum dist/docwarp-macos-x86_64 >> dist/checksums.txt
+          sha256sum dist/docwarp-macos-aarch64 >> dist/checksums.txt
+          sha256sum dist/docwarp-windows-x86_64.exe >> dist/checksums.txt
 
-          linux_sha="$(awk '/instruct-linux-x86_64$/ { print $1 }' dist/checksums.txt)"
-          macos_x86_sha="$(awk '/instruct-macos-x86_64$/ { print $1 }' dist/checksums.txt)"
-          macos_arm_sha="$(awk '/instruct-macos-aarch64$/ { print $1 }' dist/checksums.txt)"
+          linux_sha="$(awk '/docwarp-linux-x86_64$/ { print $1 }' dist/checksums.txt)"
+          macos_x86_sha="$(awk '/docwarp-macos-x86_64$/ { print $1 }' dist/checksums.txt)"
+          macos_arm_sha="$(awk '/docwarp-macos-aarch64$/ { print $1 }' dist/checksums.txt)"
 
           owner_repo="${GITHUB_REPOSITORY}"
           owner="${owner_repo%%/*}"
@@ -145,7 +145,7 @@ jobs:
             "${macos_arm_sha}" \
             "${macos_x86_sha}" \
             "${linux_sha}" \
-            "dist/instruct.rb"
+            "dist/docwarp.rb"
 
       - name: Create release notes body
         shell: bash
@@ -153,12 +153,12 @@ jobs:
           {
             echo "## Release artifacts"
             echo
-            echo "- instruct-linux-x86_64"
-            echo "- instruct-macos-x86_64"
-            echo "- instruct-macos-aarch64"
-            echo "- instruct-windows-x86_64.exe"
+            echo "- docwarp-linux-x86_64"
+            echo "- docwarp-macos-x86_64"
+            echo "- docwarp-macos-aarch64"
+            echo "- docwarp-windows-x86_64.exe"
             echo "- checksums.txt"
-            echo "- instruct.rb (Homebrew formula with release checksums)"
+            echo "- docwarp.rb (Homebrew formula with release checksums)"
             echo
             echo "## Verification"
             echo
@@ -176,12 +176,12 @@ jobs:
           prerelease: ${{ steps.meta.outputs.prerelease }}
           body_path: dist/release-notes.md
           files: |
-            dist/instruct-linux-x86_64
-            dist/instruct-macos-x86_64
-            dist/instruct-macos-aarch64
-            dist/instruct-windows-x86_64.exe
+            dist/docwarp-linux-x86_64
+            dist/docwarp-macos-x86_64
+            dist/docwarp-macos-aarch64
+            dist/docwarp-windows-x86_64.exe
             dist/checksums.txt
-            dist/instruct.rb
+            dist/docwarp.rb
 
   smoke:
     name: Smoke Published Binary (${{ matrix.os }})
@@ -210,13 +210,13 @@ jobs:
 
           case "${{ matrix.platform }}" in
             linux)
-              asset="instruct-linux-x86_64"
+              asset="docwarp-linux-x86_64"
               ;;
             macos)
               if [[ "${RUNNER_ARCH}" == "ARM64" ]]; then
-                asset="instruct-macos-aarch64"
+                asset="docwarp-macos-aarch64"
               else
-                asset="instruct-macos-x86_64"
+                asset="docwarp-macos-x86_64"
               fi
               ;;
             *)
@@ -232,7 +232,7 @@ jobs:
               -H "Authorization: Bearer ${GITHUB_TOKEN}" \
               -H "Accept: application/octet-stream" \
               "${url}" \
-              -o "instruct"; then
+              -o "docwarp"; then
               break
             fi
             if [[ "${attempt}" == "10" ]]; then
@@ -242,8 +242,8 @@ jobs:
             sleep 3
           done
 
-          chmod +x "instruct"
-          ./instruct --help
+          chmod +x "docwarp"
+          ./docwarp --help
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -251,7 +251,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $url = "${env:GITHUB_SERVER_URL}/${env:GITHUB_REPOSITORY}/releases/download/${env:RELEASE_TAG}/instruct-windows-x86_64.exe"
+          $url = "${env:GITHUB_SERVER_URL}/${env:GITHUB_REPOSITORY}/releases/download/${env:RELEASE_TAG}/docwarp-windows-x86_64.exe"
           $headers = @{
             Authorization = "Bearer $env:GITHUB_TOKEN"
             Accept = "application/octet-stream"
@@ -260,7 +260,7 @@ jobs:
           $downloaded = $false
           for ($attempt = 1; $attempt -le 10; $attempt++) {
             try {
-              Invoke-WebRequest -Uri $url -Headers $headers -OutFile "instruct.exe"
+              Invoke-WebRequest -Uri $url -Headers $headers -OutFile "docwarp.exe"
               $downloaded = $true
               break
             } catch {
@@ -273,6 +273,6 @@ jobs:
             throw "Failed to download asset from $url"
           }
 
-          .\instruct.exe --help
+          .\docwarp.exe --help
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

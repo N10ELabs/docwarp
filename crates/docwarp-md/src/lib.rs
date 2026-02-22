@@ -1,7 +1,7 @@
 use std::mem;
 
 use anyhow::Result;
-use instruct_core::{Block, ConversionWarning, Document, Inline, WarningCode, model::inline_text};
+use docwarp_core::{Block, ConversionWarning, Document, Inline, WarningCode, model::inline_text};
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
 #[derive(Debug)]

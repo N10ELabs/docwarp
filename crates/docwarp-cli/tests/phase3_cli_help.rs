@@ -4,7 +4,7 @@ use anyhow::{Context, Result, bail};
 
 #[test]
 fn root_help_includes_examples() -> Result<()> {
-    let output = run_instruct(["--help"])?;
+    let output = run_docwarp(["--help"])?;
     assert_command_success(&output, "root --help should succeed")?;
     let stdout = stdout_text(&output);
 
@@ -13,15 +13,15 @@ fn root_help_includes_examples() -> Result<()> {
         "expected examples section in root help, got:\n{stdout}"
     );
     assert!(
-        stdout.contains("instruct"),
+        stdout.contains("docwarp"),
         "expected guided-mode example in root help, got:\n{stdout}"
     );
     assert!(
-        stdout.contains("instruct md2docx ./docs/spec.md --output ./build/spec.docx"),
+        stdout.contains("docwarp md2docx ./docs/spec.md --output ./build/spec.docx"),
         "expected md2docx example in root help, got:\n{stdout}"
     );
     assert!(
-        stdout.contains("instruct docx2md ./contracts/master.docx --output ./contracts/master.md"),
+        stdout.contains("docwarp docx2md ./contracts/master.docx --output ./contracts/master.md"),
         "expected docx2md example in root help, got:\n{stdout}"
     );
 
@@ -30,7 +30,7 @@ fn root_help_includes_examples() -> Result<()> {
 
 #[test]
 fn md2docx_help_includes_examples() -> Result<()> {
-    let output = run_instruct(["md2docx", "--help"])?;
+    let output = run_docwarp(["md2docx", "--help"])?;
     assert_command_success(&output, "md2docx --help should succeed")?;
     let stdout = stdout_text(&output);
 
@@ -56,7 +56,7 @@ fn md2docx_help_includes_examples() -> Result<()> {
 
 #[test]
 fn docx2md_help_includes_examples() -> Result<()> {
-    let output = run_instruct(["docx2md", "--help"])?;
+    let output = run_docwarp(["docx2md", "--help"])?;
     assert_command_success(&output, "docx2md --help should succeed")?;
     let stdout = stdout_text(&output);
 
@@ -69,7 +69,7 @@ fn docx2md_help_includes_examples() -> Result<()> {
         "expected assets-dir example in docx2md help, got:\n{stdout}"
     );
     assert!(
-        stdout.contains("--config ./.instruct.yml --report ./report.json"),
+        stdout.contains("--config ./.docwarp.yml --report ./report.json"),
         "expected config/report example in docx2md help, got:\n{stdout}"
     );
     assert!(
@@ -80,11 +80,11 @@ fn docx2md_help_includes_examples() -> Result<()> {
     Ok(())
 }
 
-fn run_instruct<const N: usize>(args: [&str; N]) -> Result<Output> {
-    Command::new(env!("CARGO_BIN_EXE_instruct"))
+fn run_docwarp<const N: usize>(args: [&str; N]) -> Result<Output> {
+    Command::new(env!("CARGO_BIN_EXE_docwarp"))
         .args(args)
         .output()
-        .context("failed running instruct")
+        .context("failed running docwarp")
 }
 
 fn assert_command_success(output: &Output, label: &str) -> Result<()> {

@@ -26,7 +26,7 @@ fn guided_mode_converts_markdown_file_with_default_output() -> Result<()> {
         stdout_text(&run)
     );
     assert!(
-        stdout_text(&run).contains("instruct (v"),
+        stdout_text(&run).contains("docwarp (v"),
         "expected startup header title, got:\n{}",
         stdout_text(&run)
     );
@@ -57,7 +57,7 @@ fn guided_mode_converts_docx_file_with_default_output() -> Result<()> {
     let output_md = temp.path().join("roundtrip.md");
 
     fs::write(&seed_md, "# Source\n\nBody\n").context("failed writing seed markdown")?;
-    let setup = run_instruct([
+    let setup = run_docwarp([
         "md2docx",
         seed_md.to_string_lossy().as_ref(),
         "--output",
@@ -89,7 +89,7 @@ fn subcommand_output_includes_header_mode() -> Result<()> {
     let output = temp.path().join("note.docx");
     fs::write(&input, "# Header\n\nBody\n").context("failed writing markdown fixture")?;
 
-    let run = run_instruct([
+    let run = run_docwarp([
         "md2docx",
         input.to_string_lossy().as_ref(),
         "--output",
@@ -97,7 +97,7 @@ fn subcommand_output_includes_header_mode() -> Result<()> {
     ])?;
     assert_command_status(&run, Some(0), "md2docx should succeed")?;
     assert!(
-        stdout_text(&run).contains("instruct (v"),
+        stdout_text(&run).contains("docwarp (v"),
         "expected startup header title, got:\n{}",
         stdout_text(&run)
     );
@@ -110,20 +110,20 @@ fn subcommand_output_includes_header_mode() -> Result<()> {
     Ok(())
 }
 
-fn run_instruct<const N: usize>(args: [&str; N]) -> Result<Output> {
-    Command::new(env!("CARGO_BIN_EXE_instruct"))
+fn run_docwarp<const N: usize>(args: [&str; N]) -> Result<Output> {
+    Command::new(env!("CARGO_BIN_EXE_docwarp"))
         .args(args)
         .output()
-        .context("failed running instruct")
+        .context("failed running docwarp")
 }
 
 fn run_guided_with_stdin(stdin_payload: &str) -> Result<Output> {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_instruct"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_docwarp"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .context("failed spawning guided instruct process")?;
+        .context("failed spawning guided docwarp process")?;
 
     {
         let mut stdin = child

@@ -1,12 +1,12 @@
 # Configuration and Style Maps
 
-`instruct` can load runtime defaults from `.instruct.yml` and can override style mapping with YAML or JSON files.
+`docwarp` can load runtime defaults from `.docwarp.yml` and can override style mapping with YAML or JSON files.
 
 ## Config File
 
-When `--config` is omitted, `instruct` auto-loads `.instruct.yml` from the current working directory if it exists.
+When `--config` is omitted, `docwarp` auto-loads `.docwarp.yml` from the current working directory if it exists.
 
-Example `.instruct.yml`:
+Example `.docwarp.yml`:
 
 ```yaml
 markdown_flavor: gfm

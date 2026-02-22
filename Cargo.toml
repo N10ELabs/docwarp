@@ -1,9 +1,9 @@
 [workspace]
 members = [
-  "crates/instruct-cli",
-  "crates/instruct-core",
-  "crates/instruct-md",
-  "crates/instruct-docx",
+  "crates/docwarp-cli",
+  "crates/docwarp-core",
+  "crates/docwarp-md",
+  "crates/docwarp-docx",
 ]
 resolver = "2"
 
@@ -26,3 +26,4 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 walkdir = "2.5"
 glob = "0.3"
 tempfile = "3.10"
+rpassword = "7.3"

@@ -1,22 +1,23 @@
 [package]
-name = "instruct-cli"
+name = "docwarp-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "instruct"
+name = "docwarp"
 path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
 serde_json.workspace = true
-instruct-core = { path = "../instruct-core" }
-instruct-md = { path = "../instruct-md" }
-instruct-docx = { path = "../instruct-docx" }
+docwarp-core = { path = "../docwarp-core" }
+docwarp-md = { path = "../docwarp-md" }
+docwarp-docx = { path = "../docwarp-docx" }
 glob.workspace = true
 walkdir.workspace = true
+rpassword.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
