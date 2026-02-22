@@ -12,7 +12,7 @@ fn guided_mode_converts_markdown_file_with_default_output() -> Result<()> {
     let output = temp.path().join("note.docx");
     fs::write(&input, "# Guided\n\nBody\n").context("failed writing markdown fixture")?;
 
-    let run = run_guided_with_stdin(&format!("{}\n\n", input.display()))?;
+    let run = run_guided_with_stdin(&format!("{}\n", input.display()))?;
     assert_command_status(&run, Some(0), "guided markdown conversion should succeed")?;
 
     assert!(
@@ -35,6 +35,16 @@ fn guided_mode_converts_markdown_file_with_default_output() -> Result<()> {
         "expected rounded top border in header, got:\n{}",
         stdout_text(&run)
     );
+    assert!(
+        !stdout_text(&run).contains("Output path"),
+        "did not expect output-path prompt in guided mode, got:\n{}",
+        stdout_text(&run)
+    );
+    assert!(
+        stdout_text(&run).contains("completed in "),
+        "expected duration-based completion line, got:\n{}",
+        stdout_text(&run)
+    );
 
     Ok(())
 }
@@ -55,7 +65,7 @@ fn guided_mode_converts_docx_file_with_default_output() -> Result<()> {
     ])?;
     assert_command_status(&setup, Some(0), "setup md2docx should succeed")?;
 
-    let run = run_guided_with_stdin(&format!("{}\n\n", input_docx.display()))?;
+    let run = run_guided_with_stdin(&format!("{}\n", input_docx.display()))?;
     assert_command_status(&run, Some(0), "guided docx conversion should succeed")?;
     assert!(
         output_md.is_file(),

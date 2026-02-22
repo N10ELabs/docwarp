@@ -2,7 +2,7 @@ use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
 use clap::{Parser, Subcommand};
@@ -213,8 +213,7 @@ fn run_guided_mode() -> Result<i32> {
 
     let input = prompt_for_input_path()?;
     let direction = detect_guided_direction(&input)?;
-    let default_output = default_guided_output_path(&input, direction);
-    let output = prompt_for_output_path(&input, default_output, direction)?;
+    let output = default_guided_output_path(&input, direction);
 
     println!();
     println!("Converting: {}", direction.label());
@@ -332,24 +331,6 @@ function run() {
     {
         Ok(NativePickerOutcome::Unavailable)
     }
-}
-
-fn prompt_for_output_path(
-    input: &Path,
-    default_output: PathBuf,
-    direction: GuidedDirection,
-) -> Result<PathBuf> {
-    let prompt = format!("Output path [{}]: ", default_output.display());
-    let raw = prompt_line(&prompt)?;
-    if raw.trim().is_empty() {
-        return Ok(default_output);
-    }
-
-    Ok(normalize_file_output_path(
-        input,
-        parse_user_path(&raw),
-        direction,
-    ))
 }
 
 fn browse_for_path() -> Result<PathBuf> {
@@ -556,46 +537,14 @@ fn default_guided_output_path(input: &Path, direction: GuidedDirection) -> PathB
         return output;
     }
 
-    let parent = input.parent().unwrap_or_else(|| Path::new("."));
-    let base = input
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("output");
     let suffix = direction.output_extension();
-
-    let mut candidate = parent.join(format!("{base}-{suffix}"));
+    let mut candidate = input.join(format!("instruct-{suffix}"));
     let mut index = 2usize;
     while candidate.exists() {
-        candidate = parent.join(format!("{base}-{suffix}-{index}"));
+        candidate = input.join(format!("instruct-{suffix}-{index}"));
         index += 1;
     }
     candidate
-}
-
-fn normalize_file_output_path(
-    input: &Path,
-    output: PathBuf,
-    direction: GuidedDirection,
-) -> PathBuf {
-    if !input.is_file() {
-        return output;
-    }
-
-    if output.exists() && output.is_dir() {
-        let stem = input
-            .file_stem()
-            .and_then(|value| value.to_str())
-            .unwrap_or("output");
-        return output.join(format!("{stem}.{}", direction.output_extension()));
-    }
-
-    if output.extension().is_none() {
-        let mut patched = output;
-        patched.set_extension(direction.output_extension());
-        return patched;
-    }
-
-    output
 }
 
 fn prompt_line(prompt: &str) -> Result<String> {
@@ -898,14 +847,9 @@ fn convert_md2docx_single(
     )?;
     warnings.append(&mut write_warnings);
 
-    let duration = started.elapsed().as_millis();
-    emit_summary(
-        &ConversionDirection::MdToDocx,
-        input,
-        output,
-        &warnings,
-        strict,
-    );
+    let elapsed = started.elapsed();
+    let duration = elapsed.as_millis();
+    emit_summary(&ConversionDirection::MdToDocx, elapsed, &warnings, strict);
     write_report_if_requested(
         report_path,
         ConversionDirection::MdToDocx,
@@ -957,14 +901,9 @@ fn convert_docx2md_single(
     fs::write(output, markdown)
         .with_context(|| format!("failed writing markdown output: {}", output.display()))?;
 
-    let duration = started.elapsed().as_millis();
-    emit_summary(
-        &ConversionDirection::DocxToMd,
-        input,
-        output,
-        &warnings,
-        strict,
-    );
+    let elapsed = started.elapsed();
+    let duration = elapsed.as_millis();
+    emit_summary(&ConversionDirection::DocxToMd, elapsed, &warnings, strict);
     write_report_if_requested(
         report_path,
         ConversionDirection::DocxToMd,
@@ -1241,19 +1180,17 @@ fn exit_code_from_warnings(warnings: &[ConversionWarning], strict: bool) -> i32 
 
 fn emit_summary(
     direction: &ConversionDirection,
-    input: &Path,
-    output: &Path,
+    elapsed: Duration,
     warnings: &[ConversionWarning],
     strict: bool,
 ) {
     println!(
-        "{} completed: {} -> {}",
+        "{} completed in {}",
         match direction {
             ConversionDirection::MdToDocx => "md2docx",
             ConversionDirection::DocxToMd => "docx2md",
         },
-        input.display(),
-        output.display()
+        format_duration(elapsed)
     );
 
     if warnings.is_empty() {
@@ -1274,6 +1211,10 @@ fn emit_summary(
     if strict {
         println!("strict mode enabled: warnings will produce exit code 2");
     }
+}
+
+fn format_duration(duration: Duration) -> String {
+    format!("{:.3}s", duration.as_secs_f64())
 }
 
 fn write_report_if_requested(

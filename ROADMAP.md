@@ -71,8 +71,10 @@ Last updated: 2026-02-22
 ## Phase 5: Pre-Release Enhancements (`P1`)
 - [x] Add batch conversion mode (`--glob` or directory input) while keeping single-file mode default.
 - [X] Simplify CLI interface significantly. Take inspiration from great CLI apps like Codex
+- [ ] Work on CLI defaults
 - [ ] Add configs
 - [ ] Add ability to enter passwords for protected documents
+- [ ] add ability to load company templates and style-maps containing company branding and docx styles
 - [ ] Add config profiles for common use cases (e.g., academic, technical, business)
 - [ ] Add compatibility mode flags (for example, stricter markdown output for docs platforms).
 - [ ] Simplify CLI usage with config profiles and short command aliases so common permission-related flags/defaults (for example, remote image policy, strict mode, template/style-map paths) do not need to be repeated.
