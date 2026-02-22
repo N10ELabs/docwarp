@@ -7,3 +7,6 @@
 /*.docx
 !/README.md
 !/CHANGELOG.md
+
+# Codex local environment
+.codex/
