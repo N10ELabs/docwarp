@@ -1,6 +1,6 @@
 # instruct Roadmap
 
-Last updated: 2026-02-21
+Last updated: 2026-02-22
 
 ## Current State
 - MVP scaffold is implemented and passes local tests.
@@ -9,6 +9,7 @@ Last updated: 2026-02-21
   - `instruct docx2md ...`
 - Core model, style-map precedence, warnings, strict mode, and JSON reports are in place.
 - CI/release/homebrew scaffolding exists but release metadata is not finalized.
+- Release plan is now to push through all `P1` and likely `P2` work before publishing `v0.1.0`.
 
 ## Definition of Done for `v0.1.0`
 - Reliable conversion for MVP-supported structures: headings, paragraphs, lists, tables, links, blockquotes, code blocks, images.
@@ -16,11 +17,12 @@ Last updated: 2026-02-21
 - Cross-platform build + test matrix green on macOS, Linux, Windows.
 - Release artifacts published and install flow validated (including Homebrew).
 - User-facing docs sufficient for first external users.
+- `P0` is fully complete, `P1` is complete, and `P2` is driven as far as feasible pre-release (remaining items can roll to `v0.1.x`).
 
 ## Priority Lanes
-- `P0`: must-have for `v0.1.0`.
-- `P1`: strongly recommended for `v0.1.x`.
-- `P2`: post-MVP enhancements.
+- `P0`: hard release gate for `v0.1.0`.
+- `P1`: planned for completion before `v0.1.0`.
+- `P2`: stretch scope likely to be pulled into `v0.1.0` where feasible; remaining items roll forward.
 
 ## Phase 1: Reliability Hardening (`P0`)
 - [x] Create fixture corpus under `fixtures/md` and `fixtures/docx` for all in-scope structures.
@@ -67,7 +69,7 @@ Last updated: 2026-02-21
   - [x] Homebrew tap
 - [ ] Publish `v0.1.0` and changelog.
 
-## Phase 5: Short-Term Enhancements (`P1`)
+## Phase 5: Pre-Release Enhancements (`P1`)
 - [ ] Add batch conversion mode (`--glob` or directory input) while keeping single-file mode default.
 - [ ] Simplify CLI interface significantly. Take inspiration from great CLI apps like Codex
 - [ ] Add compatibility mode flags (for example, stricter markdown output for docs platforms).
@@ -78,7 +80,7 @@ Last updated: 2026-02-21
 - [ ] Add performance benchmark suite for large documents.
 - [ ] Add regression test pack from real-world anonymized docs.
 
-## Phase 6: Post-MVP Scope (`P2`)
+## Phase 6: Stretch Pre-Release Scope (`P2`)
 - [ ] Footnotes/endnotes.
 - [ ] Headers/footers/page breaks.
 - [ ] Better TOC/section handling.
@@ -94,7 +96,7 @@ Last updated: 2026-02-21
 - Use GitHub issues with labels:
   - `roadmap:P0`, `roadmap:P1`, `roadmap:P2`
   - `area:cli`, `area:core`, `area:md`, `area:docx`, `area:release`, `area:docs`
-- Use milestone `v0.1.0` for all open `P0` tasks.
+- Use milestone `v0.1.0` for all open `P0` and in-scope `P1`/`P2` tasks targeted for the release.
 - Keep this file updated when:
   - a phase starts
   - a phase completes
