@@ -1,3 +1,9 @@
 /target
 .DS_Store
 *.swp
+
+# Local working docs (avoid publishing ad-hoc files)
+/*.md
+/*.docx
+!/README.md
+!/CHANGELOG.md
