@@ -2,29 +2,44 @@
 
 `docwarp` is a lightweight open-source CLI for converting documents between GitHub-Flavored Markdown and Microsoft Word-compatible DOCX.
 
-## Status
+## Install (Homebrew)
 
-MVP scaffold implemented for `v0.1.0`:
+```bash
+brew install n10elabs/tap/docwarp
+```
+
+Then verify:
+
+```bash
+docwarp --help
+```
+
+Note: global `brew install docwarp` is available after inclusion in `homebrew/core`.
+
+## Current Status
+
+`v0.1.0` is available and supports:
 
 - `docwarp md2docx` for Markdown -> DOCX
 - `docwarp docx2md` for DOCX -> Markdown
-- warning-first conversion policy with optional strict mode
-- optional JSON report output
-- style-map + config support
+- guided mode when run without arguments
+- warning-first conversion with optional `--strict` exit behavior
+- optional JSON conversion reports
+- config file + style-map support
+- batch conversion via directory input + `--glob`
 
-## Quick start
+## Quick Start
 
 ```bash
-docwarp
-cargo run -p docwarp-cli -- md2docx input.md --output output.docx
-cargo run -p docwarp-cli -- docx2md input.docx --output output.md
+docwarp md2docx ./input.md --output ./output.docx
+docwarp docx2md ./input.docx --output ./output.md
 ```
 
 Guided mode:
 
 - Run `docwarp` with no arguments.
-- Drag a file/folder path into the terminal (or browse interactively).
-- `docwarp` detects Markdown vs DOCX and runs the matching conversion automatically.
+- Choose a file/folder interactively (or drag a path into the terminal).
+- `docwarp` auto-detects direction and runs the matching conversion.
 
 ## Commands
 
@@ -41,7 +56,7 @@ docwarp md2docx ./docs --output ./build/docx
 docwarp docx2md ./contracts --output ./build/md --glob "**/*.docx"
 ```
 
-Run command-specific help for full examples:
+Run command-specific help for detailed examples:
 
 ```bash
 docwarp --help
@@ -59,10 +74,6 @@ docwarp docx2md --help
 - Homebrew/core submission guide: `docs/homebrew-core.md`
 - Release runbook: `docs/release.md`
 - Changelog: `CHANGELOG.md`
-
-## Warning Codes
-
-See `docs/warnings.md` for the stable warning-code catalog.
 
 ## License
 
