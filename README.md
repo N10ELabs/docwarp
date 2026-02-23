@@ -1,6 +1,6 @@
 # docwarp
 
-> Agent CLI Usage References:
+> Agentic CLI Usage References:
 > 1. [`AGENTS.md`](AGENTS.md) as the canonical hub for agents using the `docwarp` CLI.
 > 2. `README.md` (this file) for commands and conversion flow.
 > 3. [`docs/strict-mode.md`](docs/strict-mode.md) for CI/quality gates.
