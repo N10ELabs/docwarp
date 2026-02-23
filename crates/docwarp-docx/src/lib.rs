@@ -21,8 +21,15 @@ use zip::write::SimpleFileOptions;
 const OFFICE_REL_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const PACKAGE_REL_NS: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
 const CONTENT_TYPES_NS: &str = "http://schemas.openxmlformats.org/package/2006/content-types";
+const WORDPROCESSINGML_NUMBERING_CONTENT_TYPE: &str =
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml";
 const LIST_BASE_INDENT_TWIPS: u32 = 720;
 const LIST_INDENT_STEP_TWIPS: u32 = 360;
+const LIST_MAX_LEVEL: u8 = 8;
+const ORDERED_LIST_ABSTRACT_NUM_ID: u32 = 1;
+const BULLET_LIST_ABSTRACT_NUM_ID: u32 = 2;
+const ORDERED_LIST_NUM_ID: u32 = 1;
+const BULLET_LIST_NUM_ID: u32 = 2;
 const CODE_LANG_MARKER_PREFIX: &str = "[[docwarp-code-lang:";
 const CODE_LANG_MARKER_SUFFIX: &str = "]]";
 const EQUATION_MARKER_PREFIX: &str = "[[docwarp-eq:";
@@ -161,6 +168,12 @@ struct RunStyle {
     code: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ListNumbering {
+    ordered: bool,
+    level: u8,
+}
+
 #[derive(Default)]
 struct ParseParagraph {
     style: Option<String>,
@@ -223,6 +236,7 @@ pub fn write_docx(
 
     let mut state = DocxBuildState::from_template(template.as_ref());
     ensure_styles_relationship(&mut state);
+    ensure_numbering_relationship(&mut state);
 
     let document_xml = build_document_xml(
         document,
@@ -236,6 +250,7 @@ pub fn write_docx(
     )?;
 
     let styles_xml = resolve_styles_xml(template.as_ref());
+    let numbering_xml = resolve_numbering_xml(template.as_ref());
     let template_content_types = template
         .as_ref()
         .and_then(|package| package.entries.get("[Content_Types].xml"))
@@ -261,6 +276,7 @@ pub fn write_docx(
         document_rels_xml,
     );
     output_entries.insert("word/styles.xml".to_string(), styles_xml);
+    output_entries.insert("word/numbering.xml".to_string(), numbering_xml);
     output_entries.insert("docProps/core.xml".to_string(), build_core_properties_xml());
     output_entries.insert("docProps/app.xml".to_string(), build_app_properties_xml());
 
@@ -399,6 +415,7 @@ fn build_document_xml(
                     Some(240),
                     None,
                     None,
+                    None,
                     markdown_base_dir,
                     options,
                     state,
@@ -420,6 +437,7 @@ fn build_document_xml(
                     &options.style_map.docx_style_for(token),
                     if block_index > 0 { Some(240) } else { None },
                     Some(240),
+                    None,
                     None,
                     None,
                     markdown_base_dir,
@@ -446,6 +464,7 @@ fn build_document_xml(
                         Some(240),
                         None,
                         None,
+                        None,
                         markdown_base_dir,
                         options,
                         state,
@@ -457,6 +476,7 @@ fn build_document_xml(
                 body.push_str(&render_paragraph(
                     content,
                     &options.style_map.docx_style_for("quote"),
+                    None,
                     None,
                     None,
                     None,
@@ -485,6 +505,7 @@ fn build_document_xml(
                     None,
                     None,
                     None,
+                    None,
                     language.as_deref(),
                     markdown_base_dir,
                     options,
@@ -505,9 +526,11 @@ fn build_document_xml(
                     } else {
                         options.style_map.docx_style_for("list_bullet")
                     };
-                    let level = u32::from(*levels.get(index).unwrap_or(&0));
+                    let level = *levels.get(index).unwrap_or(&0);
+                    let clamped_level = level.min(LIST_MAX_LEVEL);
+                    let level_twips = u32::from(clamped_level);
                     let indent_left = LIST_BASE_INDENT_TWIPS
-                        .saturating_add(level.saturating_mul(LIST_INDENT_STEP_TWIPS));
+                        .saturating_add(level_twips.saturating_mul(LIST_INDENT_STEP_TWIPS));
 
                     body.push_str(&render_paragraph(
                         item,
@@ -515,6 +538,10 @@ fn build_document_xml(
                         None,
                         None,
                         Some(indent_left),
+                        Some(ListNumbering {
+                            ordered: is_ordered,
+                            level: clamped_level,
+                        }),
                         None,
                         markdown_base_dir,
                         options,
@@ -547,6 +574,7 @@ fn build_document_xml(
                     Some(240),
                     None,
                     None,
+                    None,
                     markdown_base_dir,
                     options,
                     state,
@@ -557,6 +585,7 @@ fn build_document_xml(
                 body.push_str(&render_paragraph(
                     &[Inline::Text("---".to_string())],
                     &options.style_map.docx_style_for("paragraph"),
+                    None,
                     None,
                     None,
                     None,
@@ -655,6 +684,7 @@ fn render_paragraph(
     spacing_before_twips: Option<u32>,
     spacing_after_twips: Option<u32>,
     indent_left_twips: Option<u32>,
+    list_numbering: Option<ListNumbering>,
     code_language: Option<&str>,
     markdown_base_dir: &Path,
     options: &DocxWriteOptions,
@@ -678,6 +708,17 @@ fn render_paragraph(
     if let Some(indent_left) = indent_left_twips {
         out.push_str(&format!(
             "<w:ind w:left=\"{indent_left}\" w:hanging=\"360\"/>"
+        ));
+    }
+    if let Some(list) = list_numbering {
+        let num_id = if list.ordered {
+            ORDERED_LIST_NUM_ID
+        } else {
+            BULLET_LIST_NUM_ID
+        };
+        out.push_str(&format!(
+            "<w:numPr><w:ilvl w:val=\"{}\"/><w:numId w:val=\"{}\"/></w:numPr>",
+            list.level, num_id
         ));
     }
     out.push_str("</w:pPr>");
@@ -1970,6 +2011,12 @@ fn resolve_styles_xml(template: Option<&TemplatePackage>) -> Vec<u8> {
         .unwrap_or_else(|| default_styles_xml().as_bytes().to_vec())
 }
 
+fn resolve_numbering_xml(template: Option<&TemplatePackage>) -> Vec<u8> {
+    template
+        .and_then(|package| package.entries.get("word/numbering.xml").cloned())
+        .unwrap_or_else(default_numbering_xml)
+}
+
 fn ensure_styles_relationship(state: &mut DocxBuildState) {
     if state.relationships.iter().any(|rel| {
         rel.rel_type == format!("{OFFICE_REL_NS}/styles")
@@ -1983,6 +2030,24 @@ fn ensure_styles_relationship(state: &mut DocxBuildState) {
         id: style_rel_id,
         rel_type: format!("{OFFICE_REL_NS}/styles"),
         target: "styles.xml".to_string(),
+        target_mode: None,
+    });
+}
+
+fn ensure_numbering_relationship(state: &mut DocxBuildState) {
+    if state
+        .relationships
+        .iter()
+        .any(|rel| rel.rel_type == format!("{OFFICE_REL_NS}/numbering"))
+    {
+        return;
+    }
+
+    let numbering_rel_id = state.next_rel_id();
+    state.relationships.push(Relationship {
+        id: numbering_rel_id,
+        rel_type: format!("{OFFICE_REL_NS}/numbering"),
+        target: "numbering.xml".to_string(),
         target_mode: None,
     });
 }
@@ -2077,6 +2142,60 @@ fn default_styles_xml() -> &'static str {
 </w:styles>"
 }
 
+fn default_numbering_xml() -> Vec<u8> {
+    let mut xml = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+<w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+<w:abstractNum w:abstractNumId=\"{BULLET_LIST_ABSTRACT_NUM_ID}\">"
+    );
+
+    for level in 0..=LIST_MAX_LEVEL {
+        let left_indent =
+            LIST_BASE_INDENT_TWIPS + u32::from(level).saturating_mul(LIST_INDENT_STEP_TWIPS);
+        xml.push_str(&format!(
+            "<w:lvl w:ilvl=\"{level}\"><w:start w:val=\"1\"/><w:numFmt w:val=\"bullet\"/><w:lvlText w:val=\"•\"/><w:lvlJc w:val=\"left\"/><w:pPr><w:ind w:left=\"{left_indent}\" w:hanging=\"360\"/></w:pPr></w:lvl>"
+        ));
+    }
+
+    xml.push_str("</w:abstractNum>");
+    xml.push_str(&format!(
+        "<w:abstractNum w:abstractNumId=\"{ORDERED_LIST_ABSTRACT_NUM_ID}\">"
+    ));
+
+    for level in 0..=LIST_MAX_LEVEL {
+        let left_indent =
+            LIST_BASE_INDENT_TWIPS + u32::from(level).saturating_mul(LIST_INDENT_STEP_TWIPS);
+        let level_text = ordered_level_text(level);
+        xml.push_str(&format!(
+            "<w:lvl w:ilvl=\"{level}\"><w:start w:val=\"1\"/><w:numFmt w:val=\"decimal\"/><w:lvlText w:val=\"{}\"/><w:lvlJc w:val=\"left\"/><w:pPr><w:ind w:left=\"{left_indent}\" w:hanging=\"360\"/></w:pPr></w:lvl>",
+            escape_xml(&level_text)
+        ));
+    }
+
+    xml.push_str("</w:abstractNum>");
+    xml.push_str(&format!(
+        "<w:num w:numId=\"{ORDERED_LIST_NUM_ID}\"><w:abstractNumId w:val=\"{ORDERED_LIST_ABSTRACT_NUM_ID}\"/></w:num>"
+    ));
+    xml.push_str(&format!(
+        "<w:num w:numId=\"{BULLET_LIST_NUM_ID}\"><w:abstractNumId w:val=\"{BULLET_LIST_ABSTRACT_NUM_ID}\"/></w:num>"
+    ));
+    xml.push_str("</w:numbering>");
+    xml.into_bytes()
+}
+
+fn ordered_level_text(level: u8) -> String {
+    let mut text = String::new();
+    for index in 0..=level {
+        if index > 0 {
+            text.push('.');
+        }
+        text.push('%');
+        text.push_str(&(u32::from(index) + 1).to_string());
+    }
+    text.push('.');
+    text
+}
+
 fn build_content_types_xml(
     media_files: &[MediaFile],
     template_content_types: Option<&[u8]>,
@@ -2108,10 +2227,13 @@ fn build_content_types_xml(
         ));
     }
 
-    xml.push_str("<Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>");
-    xml.push_str("<Override PartName=\"/word/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml\"/>");
-    xml.push_str("<Override PartName=\"/docProps/core.xml\" ContentType=\"application/vnd.openxmlformats-package.core-properties+xml\"/>");
-    xml.push_str("<Override PartName=\"/docProps/app.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.extended-properties+xml\"/>");
+    for (part_name, content_type) in required_content_type_overrides() {
+        xml.push_str(&format!(
+            "<Override PartName=\"{}\" ContentType=\"{}\"/>",
+            escape_xml(part_name),
+            escape_xml(content_type)
+        ));
+    }
     xml.push_str("</Types>");
 
     xml.into_bytes()
@@ -2135,10 +2257,45 @@ fn merge_content_types_with_media_defaults(
                 ));
             }
         }
+        for (part_name, content_type) in required_content_type_overrides() {
+            let marker = format!("PartName=\"{}\"", escape_xml(part_name));
+            if !xml.contains(&marker) {
+                additions.push_str(&format!(
+                    "<Override PartName=\"{}\" ContentType=\"{}\"/>",
+                    escape_xml(part_name),
+                    escape_xml(content_type)
+                ));
+            }
+        }
         xml.insert_str(close_index, &additions);
     }
 
     xml.into_bytes()
+}
+
+fn required_content_type_overrides() -> [(&'static str, &'static str); 5] {
+    [
+        (
+            "/word/document.xml",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml",
+        ),
+        (
+            "/word/styles.xml",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+        ),
+        (
+            "/word/numbering.xml",
+            WORDPROCESSINGML_NUMBERING_CONTENT_TYPE,
+        ),
+        (
+            "/docProps/core.xml",
+            "application/vnd.openxmlformats-package.core-properties+xml",
+        ),
+        (
+            "/docProps/app.xml",
+            "application/vnd.openxmlformats-officedocument.extended-properties+xml",
+        ),
+    ]
 }
 
 fn build_package_relationships_xml() -> Vec<u8> {
@@ -4239,6 +4396,114 @@ mod tests {
         assert!(
             rels.contains("Target=\"styles.xml\""),
             "document relationships should target styles.xml"
+        );
+    }
+
+    #[test]
+    fn lists_emit_numbering_metadata_and_parts() {
+        let dir = tempdir().expect("tempdir should be created");
+        let output_docx = dir.path().join("out.docx");
+        let doc = Document {
+            blocks: vec![
+                Block::List {
+                    ordered: false,
+                    items: vec![vec![Inline::Text("bullet".into())]],
+                    levels: vec![0],
+                    item_ordered: vec![false],
+                },
+                Block::List {
+                    ordered: true,
+                    items: vec![vec![Inline::Text("numbered".into())]],
+                    levels: vec![0],
+                    item_ordered: vec![true],
+                },
+            ],
+        };
+
+        let warnings = write_docx(
+            &doc,
+            dir.path(),
+            &output_docx,
+            &DocxWriteOptions {
+                allow_remote_images: false,
+                style_map: StyleMap::builtin(),
+                template: None,
+            },
+        )
+        .expect("DOCX write should succeed");
+        assert!(warnings.is_empty());
+
+        let mut archive = ZipArchive::new(
+            fs::File::open(&output_docx).expect("written docx should be readable as zip"),
+        )
+        .expect("written docx should be a valid zip");
+
+        let mut document_xml = String::new();
+        archive
+            .by_name("word/document.xml")
+            .expect("document.xml should exist")
+            .read_to_string(&mut document_xml)
+            .expect("document.xml should be readable");
+        assert!(
+            document_xml.contains("<w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"2\"/></w:numPr>"),
+            "bullet list items should emit w:numPr with bullet numId"
+        );
+        assert!(
+            document_xml.contains("<w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr>"),
+            "ordered list items should emit w:numPr with ordered numId"
+        );
+
+        let mut numbering_xml = String::new();
+        archive
+            .by_name("word/numbering.xml")
+            .expect("numbering.xml should exist")
+            .read_to_string(&mut numbering_xml)
+            .expect("numbering.xml should be readable");
+        assert!(
+            numbering_xml.contains("<w:num w:numId=\"1\"><w:abstractNumId w:val=\"1\"/></w:num>"),
+            "ordered numbering definition should be present"
+        );
+        assert!(
+            numbering_xml.contains("<w:num w:numId=\"2\"><w:abstractNumId w:val=\"2\"/></w:num>"),
+            "bullet numbering definition should be present"
+        );
+        assert!(
+            numbering_xml.contains("w:lvlText w:val=\"%1.%2.\""),
+            "ordered level 2 should render hierarchical numbering text"
+        );
+        assert!(
+            numbering_xml.contains("w:lvlText w:val=\"%1.%2.%3.\""),
+            "ordered level 3 should render hierarchical numbering text"
+        );
+
+        let mut rels = String::new();
+        archive
+            .by_name("word/_rels/document.xml.rels")
+            .expect("document.xml.rels should exist")
+            .read_to_string(&mut rels)
+            .expect("document.xml.rels should be readable");
+        assert!(
+            rels.contains("relationships/numbering"),
+            "document relationships should include numbering relationship type"
+        );
+        assert!(
+            rels.contains("Target=\"numbering.xml\""),
+            "document relationships should include numbering.xml target"
+        );
+
+        let mut content_types = String::new();
+        archive
+            .by_name("[Content_Types].xml")
+            .expect("[Content_Types].xml should exist")
+            .read_to_string(&mut content_types)
+            .expect("[Content_Types].xml should be readable");
+        assert!(
+            content_types.contains("PartName=\"/word/numbering.xml\""),
+            "content types should include numbering override part name"
+        );
+        assert!(
+            content_types.contains(WORDPROCESSINGML_NUMBERING_CONTENT_TYPE),
+            "content types should include numbering override content type"
         );
     }
 

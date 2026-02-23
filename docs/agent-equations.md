@@ -1,8 +1,32 @@
-# Agent Equation Authoring Contract
+# Agent Markdown Authoring Contract (Equations + Lists)
 
 Use this contract when an LLM or agent generates Markdown that will be converted by `docwarp`.
 
+Canonical entrypoint: start at [`AGENTS.md`](../AGENTS.md). This file is a detailed supporting reference for agents using the `docwarp` CLI. If any rule conflicts with `AGENTS.md`, follow `AGENTS.md`.
+
 For reusable prompt templates built on this contract, see [Agent Template Pack](agent-template-pack.md).
+
+## Required List Conventions
+
+- Unordered lists: use `-` as the Markdown marker.
+- Ordered lists: use Markdown ordered list syntax with `1.` / `2.` / `3.` (do not hand-type outline labels like `1.1`).
+- Nested lists: indent child items consistently (minimum two spaces per level).
+- Keep list-type transitions explicit. If switching between ordered and unordered, separate logical groups with a blank line.
+- Use headings around lists when semantic section labels are needed; do not fake headings by hand-formatting list item text.
+
+DOCX rendering notes:
+
+- Unordered list marker shape in Word is controlled by `word/numbering.xml`, not whether Markdown used `-`, `*`, or `+`.
+- `docwarp` default numbering emits round bullets for unordered lists and hierarchical numbering for nested ordered lists (`1.1`, `1.1.1`, ...).
+- If heading-like visual styling is required on numbered or bulleted list items, map `list_number` and/or `list_bullet` to a heading style in `md_to_docx` while keeping list semantics.
+
+Example style-map override:
+
+```yaml
+md_to_docx:
+  list_number: Heading2
+  list_bullet: ListBullet
+```
 
 ## Required Delimiters
 
@@ -82,4 +106,6 @@ When writing Markdown for docwarp:
 - Put each display equation in its own paragraph with no surrounding sentence text on the same line.
 - Prefer standard LaTeX math commands (\frac, \sqrt, \sum, \int, subscripts/superscripts, matrix, argmin/argmax).
 - Do not use \(...\), \[...\], align/equation environments, or custom macros.
+- Use '-' for unordered lists and Markdown numbering syntax for ordered lists.
+- For nested ordered lists, use indentation levels instead of manually typing labels like '1.1' in text.
 ```

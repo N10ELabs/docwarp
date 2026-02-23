@@ -66,7 +66,8 @@ Agent guidance:
 - Preserve these tokens exactly (case-sensitive) when generating `md_to_docx` and `docx_to_md`.
 - If a custom style is needed (for example, `BrandHeading4`), map it to the nearest heading token in `docx_to_md` and keep a corresponding `md_to_docx` entry.
 - Keep heading mappings symmetric unless you intentionally want lossy round-trips.
-- For Markdown equation authoring rules used by LLM/agent pipelines, see `docs/agent-equations.md`.
+- If list items must visually match heading styles in DOCX, override `md_to_docx.list_number` and/or `md_to_docx.list_bullet` to the desired paragraph style while keeping Markdown list structure unchanged.
+- For canonical Markdown authoring rules used by CLI-based LLM/agent pipelines, see [`AGENTS.md`](../AGENTS.md). If this file conflicts with `AGENTS.md`, follow `AGENTS.md`.
 
 ## Style-Map Examples
 

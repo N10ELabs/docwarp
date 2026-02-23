@@ -1,11 +1,9 @@
 # docwarp
 
-> Agent onboarding suggestion (recommended read order):
-> 1. `README.md` (this file) for commands and conversion flow.
-> 2. [`docs/agent-equations.md`](docs/agent-equations.md) for equation delimiter and placement rules.
-> 3. [`docs/agent-template-pack.md`](docs/agent-template-pack.md) for copy/paste prompt templates.
-> 4. [`docs/configuration.md`](docs/configuration.md) for style-map tokens (`equation_inline`, `equation_block`) and runtime config.
-> 5. [`docs/strict-mode.md`](docs/strict-mode.md) for CI/quality gates.
+> Agent CLI Usage References:
+> 1. [`AGENTS.md`](AGENTS.md) as the canonical hub for agents using the `docwarp` CLI.
+> 2. `README.md` (this file) for commands and conversion flow.
+> 3. [`docs/strict-mode.md`](docs/strict-mode.md) for CI/quality gates.
 
 `docwarp` is a lightweight open-source CLI for converting documents between GitHub-Flavored Markdown and Microsoft Word-compatible DOCX.
 
@@ -68,7 +66,7 @@ docwarp docx2md --help
 
 - Install guide: `docs/install.md`
 - Configuration and style maps: `docs/configuration.md`
-- Agent equation authoring contract: `docs/agent-equations.md`
+- Agent instruction hub (canonical): `AGENTS.md`
 - Strict mode and CI guidance: `docs/strict-mode.md`
 - JSON report schema: `docs/report-schema.md`
 - Warning code catalog: `docs/warnings.md`

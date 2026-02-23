@@ -2,6 +2,8 @@
 
 This pack gives reusable prompt templates for agents that generate Markdown intended for `docwarp`.
 
+Canonical entrypoint: start at [`AGENTS.md`](../AGENTS.md). This file is a detailed supporting reference for agents using the `docwarp` CLI. If any rule conflicts with `AGENTS.md`, follow `AGENTS.md`.
+
 Use these templates when you want consistent equation formatting, predictable round-tripping, and minimal manual cleanup in Word.
 
 ## Universal Equation Contract
@@ -14,6 +16,21 @@ Apply this contract in every template:
 - Use one display equation per `$$...$$` block.
 - Do not use `\(...\)` or `\[...\]`.
 - Do not use `align`, `equation`, or custom macro definitions.
+
+## Universal List Contract
+
+Apply these list rules in every template:
+
+- Use `-` for unordered list items.
+- Use standard Markdown ordered list syntax (`1.`, `2.`, `3.`) for ordered lists.
+- For nested ordered lists, use indentation only; do not manually type outline labels like `1.1` or `1.1.1`.
+- Keep nesting indentation consistent (minimum two spaces per level).
+- If switching between ordered and unordered groups, separate list groups with a blank line.
+- Use real headings (`##`, `###`) for section labels above lists rather than styling list text manually.
+
+DOCX note:
+
+- Word bullet shape and nested numbering patterns are controlled by DOCX numbering definitions; agents should focus on Markdown structure, not visual glyph hacks.
 
 Example display equation block:
 
@@ -42,6 +59,10 @@ Requirements:
   - display math: multiline $$ blocks only
   - one display equation per block and in its own paragraph
   - no \(...\), no \[...\], no align/equation environments, no custom macros
+- Follow this list contract exactly:
+  - unordered lists use '-'
+  - ordered lists use Markdown numbering syntax
+  - nested ordered lists use indentation (no manual "1.1" text)
 - Use concise technical prose.
 - Prefer standard LaTeX math commands (\frac, \sqrt, \sum, \int, subscripts/superscripts, matrix, \arg\min/\arg\max).
 - Include these sections in order:
@@ -88,6 +109,9 @@ Math and formatting rules:
 - no \(...\), no \[...\], no align/equation environments
 - no custom macro definitions
 - equations must use standard LaTeX commands only
+- unordered lists use '-'
+- ordered/nested ordered lists use Markdown numbering + indentation
+- do not manually type outline labels like 1.1 in body text
 - use clear variable definitions before first use
 
 Style:
@@ -125,6 +149,11 @@ Equation rules:
 - use \arg\min or \arg\max for objectives where applicable
 - include at least one summation and one matrix equation if relevant
 
+List rules:
+- unordered lists use '-'
+- ordered lists use Markdown numbering syntax
+- nested ordered lists rely on indentation only
+
 Output constraints:
 - Markdown only
 - deterministic section ordering
@@ -143,6 +172,7 @@ Rules:
 - inline math with $...$
 - display math with multiline $$ blocks only
 - no \(...\), no \[...\], no align/equation environments, no custom macros
+- if lists are included, use '-' for unordered and indentation-based nested numbering
 - output must be valid GitHub-Flavored Markdown
 
 Produce:
@@ -158,6 +188,8 @@ When an agent also generates style-map config for `md2docx`, keep these tokens:
 
 - `md_to_docx.equation_inline`
 - `md_to_docx.equation_block`
+- `md_to_docx.list_bullet`
+- `md_to_docx.list_number`
 
 Example:
 
@@ -165,6 +197,8 @@ Example:
 md_to_docx:
   equation_inline: EquationInline
   equation_block: Equation
+  list_bullet: ListBullet
+  list_number: ListNumber
 ```
 
 ## Recommended Pipeline Pattern
@@ -173,4 +207,3 @@ md_to_docx:
 2. Validate math delimiters quickly (`$...$`, multiline `$$...$$`).
 3. Run `docwarp md2docx`.
 4. If strict mode is desired in CI, run with `--strict` and fail on warnings.
-
