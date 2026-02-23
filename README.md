@@ -15,14 +15,6 @@
 brew install n10elabs/tap/docwarp
 ```
 
-Then verify:
-
-```bash
-docwarp --help
-```
-
-Note: global `brew install docwarp` is available after inclusion in `homebrew/core`.
-
 ## Current Status
 
 `v0.1.0` is available and supports:
