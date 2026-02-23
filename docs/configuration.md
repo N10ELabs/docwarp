@@ -66,6 +66,7 @@ Agent guidance:
 - Preserve these tokens exactly (case-sensitive) when generating `md_to_docx` and `docx_to_md`.
 - If a custom style is needed (for example, `BrandHeading4`), map it to the nearest heading token in `docx_to_md` and keep a corresponding `md_to_docx` entry.
 - Keep heading mappings symmetric unless you intentionally want lossy round-trips.
+- For Markdown equation authoring rules used by LLM/agent pipelines, see `docs/agent-equations.md`.
 
 ## Style-Map Examples
 
