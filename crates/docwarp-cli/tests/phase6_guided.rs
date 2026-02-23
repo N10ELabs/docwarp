@@ -14,36 +14,28 @@ fn guided_mode_converts_markdown_file_with_default_output() -> Result<()> {
 
     let run = run_guided_with_stdin(&format!("{}\n", input.display()))?;
     assert_command_status(&run, Some(0), "guided markdown conversion should succeed")?;
+    let stdout = stdout_text(&run);
 
     assert!(
         output.is_file(),
         "expected guided output at {}",
         output.display()
     );
+    assert_guided_startup_header(&stdout);
     assert!(
-        stdout_text(&run).contains("Converting: Markdown -> DOCX"),
+        stdout.contains("Converting: Markdown -> DOCX"),
         "expected guided conversion label, got:\n{}",
-        stdout_text(&run)
+        stdout
     );
     assert!(
-        stdout_text(&run).contains("docwarp (v"),
-        "expected startup header title, got:\n{}",
-        stdout_text(&run)
-    );
-    assert!(
-        stdout_text(&run).contains("╭"),
-        "expected rounded top border in header, got:\n{}",
-        stdout_text(&run)
-    );
-    assert!(
-        !stdout_text(&run).contains("Output path"),
+        !stdout.contains("Output path"),
         "did not expect output-path prompt in guided mode, got:\n{}",
-        stdout_text(&run)
+        stdout
     );
     assert!(
-        stdout_text(&run).contains("completed in "),
+        stdout.contains("completed in "),
         "expected duration-based completion line, got:\n{}",
-        stdout_text(&run)
+        stdout
     );
 
     Ok(())
@@ -96,18 +88,38 @@ fn subcommand_output_includes_header_mode() -> Result<()> {
         output.to_string_lossy().as_ref(),
     ])?;
     assert_command_status(&run, Some(0), "md2docx should succeed")?;
+    let stdout = stdout_text(&run);
+    assert_startup_header(&stdout);
     assert!(
-        stdout_text(&run).contains("docwarp (v"),
-        "expected startup header title, got:\n{}",
-        stdout_text(&run)
-    );
-    assert!(
-        stdout_text(&run).contains("╰"),
-        "expected rounded bottom border in header, got:\n{}",
-        stdout_text(&run)
+        !stdout.contains("Paste a path, or press Enter to choose."),
+        "subcommand header should not include guided picker hint, got:\n{}",
+        stdout
     );
 
     Ok(())
+}
+
+fn assert_startup_header(stdout: &str) {
+    assert!(
+        stdout.contains("╭─ ◉ docwarp v") || stdout.contains("+-- o docwarp v"),
+        "expected startup box title, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("md ⇄ docx") || stdout.contains("md <--> docx"),
+        "expected conversion label in startup header, got:\n{stdout}"
+    );
+}
+
+fn assert_guided_startup_header(stdout: &str) {
+    assert_startup_header(stdout);
+    assert!(
+        stdout.contains("Paste a path, or press Enter to choose."),
+        "expected guided picker instruction in startup header, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("Type / for options."),
+        "expected guided options instruction in startup header, got:\n{stdout}"
+    );
 }
 
 fn run_docwarp<const N: usize>(args: [&str; N]) -> Result<Output> {

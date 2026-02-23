@@ -12,5 +12,6 @@ reqwest.workspace = true
 docwarp-core = { path = "../docwarp-core" }
 tempfile.workspace = true
 latex2mathml.workspace = true
+office-crypto.workspace = true
 
 [dev-dependencies]

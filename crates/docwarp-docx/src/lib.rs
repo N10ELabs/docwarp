@@ -11,6 +11,7 @@ use docwarp_core::{
     Block, ConversionWarning, Document, Inline, StyleMap, WarningCode, model::inline_text,
 };
 use latex2mathml::{DisplayStyle, latex_to_mathml};
+use office_crypto::DecryptError as OfficeDecryptError;
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
 use reqwest::blocking::Client;
@@ -2404,6 +2405,7 @@ pub fn read_docx(
     let mut in_math_text_node = false;
     let mut math_para_depth = 0usize;
     let mut current_equation: Option<EquationCapture> = None;
+    let mut unsupported_equation_warning_emitted = false;
 
     let mut reader = Reader::from_str(&document_xml);
     reader.config_mut().trim_text(false);
@@ -2634,6 +2636,7 @@ pub fn read_docx(
                         &mut paragraph,
                         &mut table,
                         &mut warnings,
+                        &mut unsupported_equation_warning_emitted,
                     );
                     in_math_text_node = false;
                 }
@@ -2682,6 +2685,7 @@ pub fn read_docx(
                         &mut paragraph,
                         &mut table,
                         &mut warnings,
+                        &mut unsupported_equation_warning_emitted,
                     );
                     in_math_text_node = false;
                 }
@@ -2781,6 +2785,7 @@ pub fn read_docx(
             &mut paragraph,
             &mut table,
             &mut warnings,
+            &mut unsupported_equation_warning_emitted,
         );
     }
 
@@ -2808,6 +2813,68 @@ fn decrypt_password_protected_docx(
     output_path: &Path,
     password: &str,
 ) -> Result<()> {
+    match decrypt_password_protected_docx_with_rust(input_path, output_path, password) {
+        Ok(()) => Ok(()),
+        Err(rust_error) => {
+            match decrypt_password_protected_docx_with_python(input_path, output_path, password) {
+                Ok(()) => Ok(()),
+                Err(PythonDocxDecryptError::IncorrectPassword) => {
+                    Err(anyhow!("incorrect DOCX password"))
+                }
+                Err(PythonDocxDecryptError::MissingPackage) => Err(anyhow!(
+                    "unable to decrypt password-protected DOCX with built-in Rust decryptor ({}) and Python fallback: package 'msoffcrypto-tool' is not installed (install with: pip install msoffcrypto-tool). Verify the password, or install Python fallback support.",
+                    describe_rust_decrypt_error(&rust_error)
+                )),
+                Err(PythonDocxDecryptError::PythonNotFound) => Err(anyhow!(
+                    "unable to decrypt password-protected DOCX with built-in Rust decryptor ({}) and Python fallback: python3/python not found. Verify the password, or install Python fallback support.",
+                    describe_rust_decrypt_error(&rust_error)
+                )),
+                Err(PythonDocxDecryptError::LaunchFailed { python, source }) => Err(anyhow!(
+                    "unable to decrypt password-protected DOCX with built-in Rust decryptor ({}) and Python fallback: failed launching {python}: {source}",
+                    describe_rust_decrypt_error(&rust_error)
+                )),
+                Err(PythonDocxDecryptError::Failed { python, details }) => Err(anyhow!(
+                    "unable to decrypt password-protected DOCX with built-in Rust decryptor ({}) and Python fallback: failed with {python}: {details}",
+                    describe_rust_decrypt_error(&rust_error)
+                )),
+            }
+        }
+    }
+}
+
+fn decrypt_password_protected_docx_with_rust(
+    input_path: &Path,
+    output_path: &Path,
+    password: &str,
+) -> std::result::Result<(), OfficeDecryptError> {
+    let decrypted_bytes = office_crypto::decrypt_from_file(input_path, password)?;
+    if !is_valid_decrypted_docx_archive(&decrypted_bytes) {
+        return Err(OfficeDecryptError::InvalidStructure);
+    }
+    fs::write(output_path, decrypted_bytes).map_err(OfficeDecryptError::IoError)?;
+    Ok(())
+}
+
+#[derive(Debug)]
+enum PythonDocxDecryptError {
+    MissingPackage,
+    IncorrectPassword,
+    PythonNotFound,
+    LaunchFailed {
+        python: &'static str,
+        source: io::Error,
+    },
+    Failed {
+        python: &'static str,
+        details: String,
+    },
+}
+
+fn decrypt_password_protected_docx_with_python(
+    input_path: &Path,
+    output_path: &Path,
+    password: &str,
+) -> std::result::Result<(), PythonDocxDecryptError> {
     let script = r#"
 import os
 import sys
@@ -2849,7 +2916,10 @@ except Exception as exc:
             Ok(output) => output,
             Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
             Err(err) => {
-                last_failure = Some(anyhow!("failed launching {python}: {err}"));
+                last_failure = Some(PythonDocxDecryptError::LaunchFailed {
+                    python,
+                    source: err,
+                });
                 continue;
             }
         };
@@ -2860,28 +2930,53 @@ except Exception as exc:
 
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let details = if !stderr.is_empty() { stderr } else { stdout };
+        let details = if !stderr.is_empty() {
+            stderr
+        } else if !stdout.is_empty() {
+            stdout
+        } else {
+            "unknown decryption failure".to_string()
+        };
 
         match output.status.code() {
             Some(3) => {
-                return Err(anyhow!(
-                    "password-protected DOCX support requires Python package 'msoffcrypto-tool' (install with: pip install msoffcrypto-tool)"
-                ));
+                return Err(PythonDocxDecryptError::MissingPackage);
             }
             Some(4) => {
-                return Err(anyhow!("incorrect DOCX password"));
+                return Err(PythonDocxDecryptError::IncorrectPassword);
             }
             _ => {
-                last_failure = Some(anyhow!(
-                    "failed decrypting password-protected DOCX with {python}: {details}"
-                ));
+                last_failure = Some(PythonDocxDecryptError::Failed { python, details });
             }
         }
     }
 
-    Err(last_failure.unwrap_or_else(|| {
-        anyhow!("unable to decrypt password-protected DOCX: python3/python not found")
-    }))
+    Err(last_failure.unwrap_or(PythonDocxDecryptError::PythonNotFound))
+}
+
+fn describe_rust_decrypt_error(error: &OfficeDecryptError) -> String {
+    match error {
+        OfficeDecryptError::IoError(source) => format!("I/O error: {source}"),
+        OfficeDecryptError::InvalidHeader => "invalid encrypted container header".to_string(),
+        OfficeDecryptError::InvalidStructure => {
+            "incorrect password or unsupported encrypted structure".to_string()
+        }
+        OfficeDecryptError::NotEncrypted => "file is not encrypted".to_string(),
+        OfficeDecryptError::Unimplemented(feature) => {
+            format!("unsupported encryption feature ({feature})")
+        }
+        OfficeDecryptError::Unknown => "unknown decryption error".to_string(),
+    }
+}
+
+fn is_valid_decrypted_docx_archive(bytes: &[u8]) -> bool {
+    let cursor = io::Cursor::new(bytes);
+    let mut archive = match ZipArchive::new(cursor) {
+        Ok(archive) => archive,
+        Err(_) => return false,
+    };
+
+    archive.by_name("word/document.xml").is_ok()
 }
 
 fn read_relationships<R: Read + std::io::Seek>(
@@ -3220,6 +3315,7 @@ fn finalize_equation_capture(
     paragraph: &mut Option<ParseParagraph>,
     table: &mut Option<ParseTable>,
     warnings: &mut Vec<ConversionWarning>,
+    unsupported_equation_warning_emitted: &mut bool,
 ) {
     let Some(capture) = current.as_mut() else {
         return;
@@ -3241,11 +3337,12 @@ fn finalize_equation_capture(
             table,
         );
     }
-    if capture.unsupported {
+    if capture.unsupported && !*unsupported_equation_warning_emitted {
         warnings.push(ConversionWarning::new(
             WarningCode::UnsupportedFeature,
-            "Encountered unsupported OMML equation structure; flattened to linear text",
+            "Encountered unsupported OMML equation styling/structure; flattened to linear text. Source DOCX equation styling remains unchanged.",
         ));
+        *unsupported_equation_warning_emitted = true;
     }
 }
 
@@ -3470,6 +3567,35 @@ mod tests {
         let detected =
             is_password_protected_docx(&output_docx).expect("header detection should succeed");
         assert!(!detected);
+    }
+
+    #[test]
+    fn decrypted_docx_archive_validation_rejects_non_zip_bytes() {
+        assert!(!is_valid_decrypted_docx_archive(b"not a zip archive"));
+    }
+
+    #[test]
+    fn decrypted_docx_archive_validation_accepts_real_docx_zip() {
+        let dir = tempdir().expect("tempdir should be created");
+        let output_docx = dir.path().join("plain.docx");
+        let doc = Document {
+            blocks: vec![Block::Paragraph(vec![Inline::Text("plain".into())])],
+        };
+
+        write_docx(
+            &doc,
+            dir.path(),
+            &output_docx,
+            &DocxWriteOptions {
+                allow_remote_images: false,
+                style_map: StyleMap::builtin(),
+                template: None,
+            },
+        )
+        .expect("DOCX write should succeed");
+
+        let bytes = fs::read(&output_docx).expect("DOCX should be readable as bytes");
+        assert!(is_valid_decrypted_docx_archive(&bytes));
     }
 
     #[test]
@@ -3953,6 +4079,13 @@ mod tests {
                 .any(|warning| warning.code == WarningCode::UnsupportedFeature),
             "unsupported OMML should emit unsupported_feature warning"
         );
+        assert!(
+            warnings.iter().any(|warning| {
+                warning.code == WarningCode::UnsupportedFeature
+                    && warning.message.contains("styling remains unchanged")
+            }),
+            "unsupported OMML warning should explain source styling is unchanged"
+        );
         let Some(Block::Paragraph(inlines)) = document.blocks.first() else {
             panic!("expected paragraph block");
         };
@@ -3962,6 +4095,55 @@ mod tests {
                 tex: "x".to_string(),
                 display: false
             }]
+        );
+    }
+
+    #[test]
+    fn warns_once_for_multiple_unsupported_omml_equations() {
+        let dir = tempdir().expect("tempdir should be created");
+        let input_docx = dir.path().join("multiple-unsupported-omml.docx");
+        write_minimal_docx_with_document_xml(
+            &input_docx,
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">
+  <w:body>
+    <w:p>
+      <m:oMath>
+        <m:groupChr>
+          <m:e><m:r><m:t>x</m:t></m:r></m:e>
+        </m:groupChr>
+      </m:oMath>
+    </w:p>
+    <w:p>
+      <m:oMath>
+        <m:groupChr>
+          <m:e><m:r><m:t>y</m:t></m:r></m:e>
+        </m:groupChr>
+      </m:oMath>
+    </w:p>
+    <w:sectPr/>
+  </w:body>
+</w:document>"#,
+        )
+        .expect("fixture docx should be written");
+
+        let (_document, warnings) = read_docx(
+            &input_docx,
+            &DocxReadOptions {
+                assets_dir: dir.path().join("assets"),
+                style_map: StyleMap::builtin(),
+                password: None,
+            },
+        )
+        .expect("DOCX read should succeed");
+
+        let unsupported_warning_count = warnings
+            .iter()
+            .filter(|warning| warning.code == WarningCode::UnsupportedFeature)
+            .count();
+        assert_eq!(
+            unsupported_warning_count, 1,
+            "multiple unsupported equations should emit a single unsupported_feature warning"
         );
     }
 

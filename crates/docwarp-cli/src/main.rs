@@ -1,3 +1,4 @@
+use std::env;
 use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
@@ -131,7 +132,8 @@ fn main() {
 }
 
 fn run(cli: Cli) -> Result<i32> {
-    emit_startup_header();
+    let guided_mode = cli.command.is_none();
+    emit_startup_header(guided_mode);
 
     match cli.command {
         Some(Commands::Md2docx {
@@ -172,16 +174,197 @@ fn run(cli: Cli) -> Result<i32> {
     }
 }
 
-fn emit_startup_header() {
-    let version = env!("CARGO_PKG_VERSION");
-    let title = format!("docwarp (v{version})");
-    let width = title.chars().count();
-    let horizontal = "─".repeat(width + 2);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StartupFrame {
+    Unicode,
+    Ascii,
+}
 
-    println!("╭{horizontal}╮");
-    println!("│ {title} │");
-    println!("╰{horizontal}╯");
+impl StartupFrame {
+    fn title_prefix(self) -> &'static str {
+        match self {
+            StartupFrame::Unicode => "◉ docwarp",
+            StartupFrame::Ascii => "o docwarp",
+        }
+    }
+
+    fn conversion_label(self) -> &'static str {
+        match self {
+            StartupFrame::Unicode => "md ⇄ docx",
+            StartupFrame::Ascii => "md <--> docx",
+        }
+    }
+
+    fn guided_prompt(self) -> &'static str {
+        match self {
+            StartupFrame::Unicode => "› ",
+            StartupFrame::Ascii => "> ",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct StartupLine {
+    text: String,
+    dim: bool,
+}
+
+fn emit_startup_header(guided_mode: bool) {
+    let frame = startup_frame();
+    let version = env!("CARGO_PKG_VERSION");
+    let title = format!("{} v{version}", frame.title_prefix());
+    let mut lines = vec![StartupLine {
+        text: frame.conversion_label().to_string(),
+        dim: false,
+    }];
+    if guided_mode {
+        lines.push(StartupLine {
+            text: "Paste a path, or press Enter to choose.".to_string(),
+            dim: true,
+        });
+        lines.push(StartupLine {
+            text: "Type / for options.".to_string(),
+            dim: true,
+        });
+    }
+
+    print_startup_box(frame, &title, &lines, should_use_ansi_color());
     println!();
+}
+
+fn startup_frame() -> StartupFrame {
+    if should_use_unicode_ui() {
+        StartupFrame::Unicode
+    } else {
+        StartupFrame::Ascii
+    }
+}
+
+fn should_use_unicode_ui() -> bool {
+    if env_flag_is_truthy("DOCWARP_ASCII") || env_flag_is_truthy("NO_UNICODE") {
+        return false;
+    }
+
+    if !io::stdout().is_terminal() {
+        return false;
+    }
+
+    if let Ok(term) = env::var("TERM") {
+        if term.trim().eq_ignore_ascii_case("dumb") {
+            return false;
+        }
+    }
+
+    locale_supports_utf8()
+}
+
+fn env_flag_is_truthy(name: &str) -> bool {
+    let Ok(raw) = env::var(name) else {
+        return false;
+    };
+
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
+fn locale_supports_utf8() -> bool {
+    for key in ["LC_ALL", "LC_CTYPE", "LANG"] {
+        let Ok(value) = env::var(key) else {
+            continue;
+        };
+
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let upper = trimmed.to_ascii_uppercase();
+        return upper.contains("UTF-8") || upper.contains("UTF8");
+    }
+
+    true
+}
+
+fn should_use_ansi_color() -> bool {
+    if !io::stdout().is_terminal() {
+        return false;
+    }
+
+    if env::var_os("NO_COLOR").is_some() {
+        return false;
+    }
+
+    if matches!(env::var("CLICOLOR"), Ok(value) if value.trim() == "0") {
+        return false;
+    }
+
+    if let Ok(term) = env::var("TERM") {
+        if term.trim().eq_ignore_ascii_case("dumb") {
+            return false;
+        }
+    }
+
+    true
+}
+
+fn print_startup_box(frame: StartupFrame, title: &str, lines: &[StartupLine], use_color: bool) {
+    let max_content_width = lines
+        .iter()
+        .map(|line| line.text.chars().count())
+        .max()
+        .unwrap_or(0);
+    let title_width = title.chars().count();
+    let content_width = max_content_width.max(title_width + 2);
+    let top_suffix = content_width.saturating_sub(title_width + 1);
+
+    match frame {
+        StartupFrame::Unicode => {
+            let rendered_title = render_startup_title(frame, title, use_color);
+            println!("╭─ {rendered_title} {}╮", "─".repeat(top_suffix));
+            for line in lines {
+                let padded = pad_right(&line.text, content_width);
+                println!("│ {} │", maybe_dim(padded, use_color && line.dim));
+            }
+            println!("╰{}╯", "─".repeat(content_width + 2));
+        }
+        StartupFrame::Ascii => {
+            let rendered_title = render_startup_title(frame, title, use_color);
+            println!("+-- {rendered_title} {}+", "-".repeat(top_suffix));
+            for line in lines {
+                let padded = pad_right(&line.text, content_width);
+                println!("| {} |", maybe_dim(padded, use_color && line.dim));
+            }
+            println!("+{}+", "-".repeat(content_width + 2));
+        }
+    }
+}
+
+fn render_startup_title(frame: StartupFrame, title: &str, use_color: bool) -> String {
+    if frame == StartupFrame::Unicode && use_color {
+        title.replacen('◉', "\x1b[32m◉\x1b[0m", 1)
+    } else {
+        title.to_string()
+    }
+}
+
+fn maybe_dim(value: String, dim: bool) -> String {
+    if dim {
+        format!("\x1b[2m{value}\x1b[0m")
+    } else {
+        value
+    }
+}
+
+fn pad_right(value: &str, width: usize) -> String {
+    let pad = width.saturating_sub(value.chars().count());
+    let mut output = String::with_capacity(value.len() + pad);
+    output.push_str(value);
+    if pad > 0 {
+        output.push_str(&" ".repeat(pad));
+    }
+    output
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -221,10 +404,6 @@ impl GuidedDirection {
 }
 
 fn run_guided_mode() -> Result<i32> {
-    println!("Drop a Markdown or DOCX file/folder path and press Enter.");
-    println!("Press Enter to open the file picker.");
-    println!("Type / for options.");
-
     let mut options = GuidedOptions::default();
     let input = prompt_for_input_path(&mut options)?;
     let direction = detect_guided_direction(&input)?;
@@ -294,8 +473,10 @@ fn prompt_password_input(prompt: &str) -> Result<String> {
 }
 
 fn prompt_for_input_path(options: &mut GuidedOptions) -> Result<PathBuf> {
+    let prompt = startup_frame().guided_prompt();
+
     loop {
-        let raw = prompt_line("Input path: ")?;
+        let raw = prompt_line(prompt)?;
         let normalized = raw.trim();
         if normalized == "/" || normalized.eq_ignore_ascii_case("/config") {
             open_guided_options_menu(options)?;

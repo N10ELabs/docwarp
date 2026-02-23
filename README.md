@@ -1,5 +1,7 @@
 # docwarp
 
+![docwarp CLI intro](docs/assets/cli_intro.png)
+
 > Agentic CLI Usage References:
 > 1. [`AGENTS.md`](AGENTS.md) as the canonical hub for agents using the `docwarp` CLI.
 > 2. `README.md` (this file) for commands and conversion flow.
@@ -44,7 +46,7 @@ Guided mode:
 ```text
 docwarp
 docwarp md2docx <input.md|input_dir> --output <output.docx|output_dir> [--glob <pattern>] [--template <template.dotx>] [--style-map <map.yml>] [--config <docwarp.yml>] [--report <report.json|report_dir>] [--strict] [--allow-remote-images]
-docwarp docx2md <input.docx|input_dir> --output <output.md|output_dir> [--glob <pattern>] [--assets-dir <dir>] [--style-map <map.yml>] [--config <docwarp.yml>] [--report <report.json|report_dir>] [--strict]
+docwarp docx2md <input.docx|input_dir> --output <output.md|output_dir> [--glob <pattern>] [--assets-dir <dir>] [--style-map <map.yml>] [--config <docwarp.yml>] [--report <report.json|report_dir>] [--password <secret>] [--strict]
 ```
 
 Batch mode:
@@ -53,6 +55,13 @@ Batch mode:
 docwarp md2docx ./docs --output ./build/docx
 docwarp docx2md ./contracts --output ./build/md --glob "**/*.docx"
 ```
+
+## Password-Protected DOCX
+
+- `docwarp docx2md` supports password-protected DOCX files with `--password`.
+- Decryption runs with a built-in Rust path first.
+- If the Rust path cannot decrypt a file variant, `docwarp` falls back to Python (`msoffcrypto-tool`) when available.
+- Install fallback support with `pip install msoffcrypto-tool` if you need broader compatibility.
 
 Run command-specific help for detailed examples:
 
