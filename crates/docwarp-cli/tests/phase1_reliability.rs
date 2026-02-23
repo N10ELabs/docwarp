@@ -6,7 +6,7 @@ use std::process::{Command, Output};
 
 use anyhow::{Context, Result, bail};
 use docwarp_core::{Block, Document, Inline, StyleMap, WarningCode};
-use docwarp_docx::{DocxReadOptions, read_docx};
+use docwarp_docx::{DocxReadOptions, DocxWriteOptions, read_docx, write_docx};
 use docwarp_md::parse_markdown;
 use tempfile::tempdir;
 use zip::ZipWriter;
@@ -228,6 +228,73 @@ fn missing_media_emits_warning() -> Result<()> {
 }
 
 #[test]
+fn md2docx_rejects_output_equal_to_input_path() -> Result<()> {
+    let temp = tempdir().context("tempdir should be created")?;
+    let input = temp.path().join("input.md");
+    fs::write(&input, "# Title\n\nBody\n").context("failed writing markdown")?;
+
+    let run = run_docwarp([
+        "md2docx",
+        input.to_string_lossy().as_ref(),
+        "--output",
+        input.to_string_lossy().as_ref(),
+    ])?;
+
+    assert_command_status(
+        &run,
+        Some(1),
+        "md2docx should reject destructive input/output path reuse",
+    )?;
+    assert!(
+        stderr_text(&run).contains("output path must differ from input path"),
+        "expected destructive-overwrite guard in stderr, got:\n{}",
+        stderr_text(&run)
+    );
+
+    Ok(())
+}
+
+#[test]
+fn docx2md_rejects_output_equal_to_input_path() -> Result<()> {
+    let temp = tempdir().context("tempdir should be created")?;
+    let input = temp.path().join("input.docx");
+    let doc = Document {
+        blocks: vec![Block::Paragraph(vec![Inline::Text("hello".into())])],
+    };
+    write_docx(
+        &doc,
+        temp.path(),
+        &input,
+        &DocxWriteOptions {
+            allow_remote_images: false,
+            style_map: StyleMap::builtin(),
+            template: None,
+        },
+    )
+    .context("failed creating DOCX input fixture")?;
+
+    let run = run_docwarp([
+        "docx2md",
+        input.to_string_lossy().as_ref(),
+        "--output",
+        input.to_string_lossy().as_ref(),
+    ])?;
+
+    assert_command_status(
+        &run,
+        Some(1),
+        "docx2md should reject destructive input/output path reuse",
+    )?;
+    assert!(
+        stderr_text(&run).contains("output path must differ from input path"),
+        "expected destructive-overwrite guard in stderr, got:\n{}",
+        stderr_text(&run)
+    );
+
+    Ok(())
+}
+
+#[test]
 fn invalid_style_map_returns_fatal_error() -> Result<()> {
     let temp = tempdir().context("tempdir should be created")?;
     let input = temp.path().join("input.md");
@@ -429,7 +496,7 @@ fn normalize_inline_semantics(inlines: &mut [Inline]) {
             Inline::Emphasis(children)
             | Inline::Strong(children)
             | Inline::Link { text: children, .. } => normalize_inline_semantics(children),
-            Inline::Text(_) | Inline::Code(_) | Inline::LineBreak => {}
+            Inline::Text(_) | Inline::Equation { .. } | Inline::Code(_) | Inline::LineBreak => {}
         }
     }
 }

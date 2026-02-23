@@ -43,6 +43,10 @@ pub enum Block {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Inline {
     Text(String),
+    Equation {
+        tex: String,
+        display: bool,
+    },
     Emphasis(Vec<Inline>),
     Strong(Vec<Inline>),
     Code(String),
@@ -99,6 +103,7 @@ pub fn inline_text(inlines: &[Inline]) -> String {
     for inline in inlines {
         match inline {
             Inline::Text(t) => out.push_str(t),
+            Inline::Equation { tex, .. } => out.push_str(tex),
             Inline::Code(t) => out.push_str(t),
             Inline::LineBreak => out.push('\n'),
             Inline::Emphasis(children) | Inline::Strong(children) => {

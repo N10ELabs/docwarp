@@ -27,6 +27,7 @@ Note: global `brew install docwarp` is available after inclusion in `homebrew/co
 - optional JSON conversion reports
 - config file + style-map support
 - batch conversion via directory input + `--glob`
+- native Word equation round-tripping for `$...$` and `$$...$$` with equation style-map tokens
 
 ## Quick Start
 

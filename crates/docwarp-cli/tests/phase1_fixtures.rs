@@ -218,7 +218,7 @@ fn normalize_inline_images(inlines: &mut [Inline]) {
             Inline::Emphasis(children)
             | Inline::Strong(children)
             | Inline::Link { text: children, .. } => normalize_inline_images(children),
-            Inline::Text(_) | Inline::Code(_) | Inline::LineBreak => {}
+            Inline::Text(_) | Inline::Equation { .. } | Inline::Code(_) | Inline::LineBreak => {}
         }
     }
 }

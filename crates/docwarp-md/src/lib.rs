@@ -71,7 +71,8 @@ pub fn parse_markdown(input: &str) -> Result<(Document, Vec<ConversionWarning>)>
         | Options::ENABLE_STRIKETHROUGH
         | Options::ENABLE_TASKLISTS
         | Options::ENABLE_HEADING_ATTRIBUTES
-        | Options::ENABLE_FOOTNOTES;
+        | Options::ENABLE_FOOTNOTES
+        | Options::ENABLE_MATH;
 
     let parser = Parser::new_ext(input, options);
 
@@ -380,14 +381,20 @@ pub fn parse_markdown(input: &str) -> Result<(Document, Vec<ConversionWarning>)>
             }
             Event::InlineMath(math) => {
                 push_inline(
-                    Inline::Text(format!("${math}$")),
+                    Inline::Equation {
+                        tex: math.to_string(),
+                        display: false,
+                    },
                     &mut inline_stack,
                     &mut block_stack,
                 );
             }
             Event::DisplayMath(math) => {
                 push_inline(
-                    Inline::Text(format!("$$\n{math}\n$$")),
+                    Inline::Equation {
+                        tex: normalize_display_math_tex(&math),
+                        display: true,
+                    },
                     &mut inline_stack,
                     &mut block_stack,
                 );
@@ -468,7 +475,13 @@ pub fn render_markdown(document: &Document) -> String {
                 let level = (*level).clamp(1, 6);
                 format!("{} {}", "#".repeat(level as usize), render_inlines(content))
             }
-            Block::Paragraph(content) => render_inlines(content),
+            Block::Paragraph(content) => {
+                if let [Inline::Equation { tex, display: true }] = content.as_slice() {
+                    render_display_equation(tex)
+                } else {
+                    render_inlines(content)
+                }
+            }
             Block::BlockQuote(content) => {
                 let text = render_inlines_for_blockquote(content);
                 text.lines()
@@ -600,6 +613,9 @@ fn render_inlines_for_blockquote(inlines: &[Inline]) -> String {
     for inline in inlines {
         match inline {
             Inline::Text(text) => out.push_str(text),
+            Inline::Equation { tex, display } => {
+                out.push_str(&render_equation_inline(tex, *display))
+            }
             Inline::Emphasis(children) => out.push_str(&render_emphasis(children)),
             Inline::Strong(children) => out.push_str(&render_strong(children)),
             Inline::Code(code) => out.push_str(&render_code_span(code)),
@@ -628,6 +644,9 @@ fn render_inlines(inlines: &[Inline]) -> String {
     for inline in inlines {
         match inline {
             Inline::Text(text) => out.push_str(text),
+            Inline::Equation { tex, display } => {
+                out.push_str(&render_equation_inline(tex, *display))
+            }
             Inline::Emphasis(children) => out.push_str(&render_emphasis(children)),
             Inline::Strong(children) => out.push_str(&render_strong(children)),
             Inline::Code(code) => out.push_str(&render_code_span(code)),
@@ -698,6 +717,22 @@ fn render_link_destination(url: &str) -> String {
     } else {
         url.to_string()
     }
+}
+
+fn render_equation_inline(tex: &str, display: bool) -> String {
+    if display {
+        render_display_equation(tex)
+    } else {
+        format!("${tex}$")
+    }
+}
+
+fn render_display_equation(tex: &str) -> String {
+    format!("$$\n{tex}\n$$")
+}
+
+fn normalize_display_math_tex(raw: &str) -> String {
+    raw.trim_matches(|ch| ch == '\n' || ch == '\r').to_string()
 }
 
 fn heading_level_to_u8(level: HeadingLevel) -> u8 {
@@ -969,5 +1004,57 @@ Paragraph with **bold** and [link](https://example.com).
         let output = render_markdown(&document);
         assert!(output.contains("> First paragraph."));
         assert!(output.contains(">\n> Second paragraph."));
+    }
+
+    #[test]
+    fn parses_inline_and_display_equations() {
+        let input = "Inline $x^2$.\n\n$$\nE=mc^2\n$$\n";
+        let (document, warnings) = parse_markdown(input).expect("parse should succeed");
+        assert!(warnings.is_empty());
+
+        let Some(Block::Paragraph(first_para)) = document.blocks.first() else {
+            panic!("expected first block to be a paragraph");
+        };
+        assert!(first_para.iter().any(|inline| matches!(
+            inline,
+            Inline::Equation {
+                tex,
+                display: false
+            } if tex == "x^2"
+        )));
+
+        let Some(Block::Paragraph(second_para)) = document.blocks.get(1) else {
+            panic!("expected second block to be a paragraph");
+        };
+        assert_eq!(
+            second_para,
+            &vec![Inline::Equation {
+                tex: "E=mc^2".to_string(),
+                display: true
+            }]
+        );
+    }
+
+    #[test]
+    fn renders_equations_to_canonical_markdown() {
+        let document = Document {
+            blocks: vec![
+                Block::Paragraph(vec![
+                    Inline::Text("Inline ".into()),
+                    Inline::Equation {
+                        tex: "x^2".into(),
+                        display: false,
+                    },
+                ]),
+                Block::Paragraph(vec![Inline::Equation {
+                    tex: "E=mc^2".into(),
+                    display: true,
+                }]),
+            ],
+        };
+
+        let output = render_markdown(&document);
+        assert!(output.contains("Inline $x^2$"));
+        assert!(output.contains("$$\nE=mc^2\n$$"));
     }
 }

@@ -18,7 +18,7 @@ docwarp-docx = { path = "../docwarp-docx" }
 glob.workspace = true
 walkdir.workspace = true
 rpassword.workspace = true
+tempfile.workspace = true
 
 [dev-dependencies]
-tempfile.workspace = true
 zip.workspace = true

@@ -44,6 +44,8 @@ impl StyleMap {
         md_to_docx.insert("list_bullet".to_string(), "ListBullet".to_string());
         md_to_docx.insert("list_number".to_string(), "ListNumber".to_string());
         md_to_docx.insert("table".to_string(), "Table".to_string());
+        md_to_docx.insert("equation_inline".to_string(), "EquationInline".to_string());
+        md_to_docx.insert("equation_block".to_string(), "Equation".to_string());
 
         Self {
             docx_to_md,
@@ -162,5 +164,19 @@ mod tests {
                 Some(style)
             );
         }
+    }
+
+    #[test]
+    fn builtin_style_map_includes_equation_tokens() {
+        let merged = resolve_style_map(None, None);
+
+        assert_eq!(
+            merged.md_to_docx.get("equation_inline").map(String::as_str),
+            Some("EquationInline")
+        );
+        assert_eq!(
+            merged.md_to_docx.get("equation_block").map(String::as_str),
+            Some("Equation")
+        );
     }
 }

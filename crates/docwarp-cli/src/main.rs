@@ -2,7 +2,7 @@ use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
 use clap::{Parser, Subcommand};
@@ -1015,6 +1015,130 @@ fn ensure_exists(path: &Path) -> Result<()> {
     }
 }
 
+fn ensure_distinct_input_output_paths(input: &Path, output: &Path) -> Result<()> {
+    if paths_refer_to_same_location(input, output)? {
+        return Err(anyhow!(
+            "output path must differ from input path to avoid destructive overwrite: {}",
+            output.display()
+        ));
+    }
+    Ok(())
+}
+
+fn paths_refer_to_same_location(left: &Path, right: &Path) -> Result<bool> {
+    let canonical_left = fs::canonicalize(left).ok();
+    let canonical_right = fs::canonicalize(right).ok();
+    if let (Some(lhs), Some(rhs)) = (canonical_left, canonical_right) {
+        return Ok(lhs == rhs);
+    }
+
+    Ok(normalized_absolute_path(left)? == normalized_absolute_path(right)?)
+}
+
+fn normalized_absolute_path(path: &Path) -> Result<PathBuf> {
+    if path.is_absolute() {
+        return Ok(path.to_path_buf());
+    }
+    Ok(std::env::current_dir()
+        .context("failed reading current working directory")?
+        .join(path))
+}
+
+fn write_text_file_atomic(path: &Path, content: &str, label: &str) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed creating output directory: {}", parent.display()))?;
+    }
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let mut temp_output = tempfile::Builder::new()
+        .prefix(".docwarp-")
+        .suffix(".tmp")
+        .tempfile_in(parent)
+        .with_context(|| {
+            format!(
+                "failed creating temporary {} in {}",
+                label,
+                parent.display()
+            )
+        })?;
+
+    temp_output
+        .as_file_mut()
+        .write_all(content.as_bytes())
+        .with_context(|| format!("failed writing temporary {} data", label))?;
+    let _ = temp_output.as_file_mut().sync_all();
+
+    persist_tempfile_replace(temp_output, path, label)
+}
+
+fn persist_tempfile_replace(
+    tempfile: tempfile::NamedTempFile,
+    destination: &Path,
+    label: &str,
+) -> Result<()> {
+    match tempfile.persist(destination) {
+        Ok(_) => Ok(()),
+        Err(err) => {
+            if err.error.kind() != io::ErrorKind::AlreadyExists || !destination.exists() {
+                return Err(anyhow!(
+                    "failed writing {} at {}: {}",
+                    label,
+                    destination.display(),
+                    err.error
+                ));
+            }
+
+            let backup_path = temporary_backup_path(destination);
+            fs::rename(destination, &backup_path).with_context(|| {
+                format!(
+                    "failed moving existing {} to backup before replacement: {} -> {}",
+                    label,
+                    destination.display(),
+                    backup_path.display()
+                )
+            })?;
+
+            match err.file.persist(destination) {
+                Ok(_) => {
+                    let _ = fs::remove_file(&backup_path);
+                    Ok(())
+                }
+                Err(second_err) => {
+                    let _ = fs::remove_file(second_err.file.path());
+                    let restore_result = fs::rename(&backup_path, destination);
+                    let restore_note = match restore_result {
+                        Ok(_) => String::new(),
+                        Err(restore_err) => format!(
+                            " (also failed restoring original file from {}: {restore_err})",
+                            backup_path.display()
+                        ),
+                    };
+                    Err(anyhow!(
+                        "failed replacing {} at {}: {}{}",
+                        label,
+                        destination.display(),
+                        second_err.error,
+                        restore_note
+                    ))
+                }
+            }
+        }
+    }
+}
+
+fn temporary_backup_path(destination: &Path) -> PathBuf {
+    let parent = destination.parent().unwrap_or_else(|| Path::new("."));
+    let name = destination
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("output");
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    parent.join(format!(".{name}.docwarp-backup-{}-{now}", process::id()))
+}
+
 #[derive(Debug, Default)]
 struct BatchOutcome {
     converted: usize,
@@ -1031,6 +1155,8 @@ fn convert_md2docx_single(
     strict: bool,
     allow_remote_images: bool,
 ) -> Result<Vec<ConversionWarning>> {
+    ensure_distinct_input_output_paths(input, output)?;
+
     let started = Instant::now();
     let input_data = fs::read_to_string(input)
         .with_context(|| format!("failed reading markdown input: {}", input.display()))?;
@@ -1079,6 +1205,8 @@ fn convert_docx2md_single(
     password: Option<&str>,
     strict: bool,
 ) -> Result<Vec<ConversionWarning>> {
+    ensure_distinct_input_output_paths(input, output)?;
+
     let started = Instant::now();
     let output_parent = output
         .parent()
@@ -1101,13 +1229,7 @@ fn convert_docx2md_single(
 
     rewrite_image_paths_relative_to_output(&mut document, &output_parent);
     let markdown = render_markdown(&document);
-
-    if let Some(parent) = output.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("failed creating output directory: {}", parent.display()))?;
-    }
-    fs::write(output, markdown)
-        .with_context(|| format!("failed writing markdown output: {}", output.display()))?;
+    write_text_file_atomic(output, &markdown, "markdown output")?;
 
     let elapsed = started.elapsed();
     let duration = elapsed.as_millis();
@@ -1517,6 +1639,7 @@ fn rewrite_inline_paths(inlines: &mut [docwarp_core::Inline], output_parent: &Pa
                 rewrite_inline_paths(children, output_parent)
             }
             docwarp_core::Inline::Text(_)
+            | docwarp_core::Inline::Equation { .. }
             | docwarp_core::Inline::Code(_)
             | docwarp_core::Inline::LineBreak => {}
         }

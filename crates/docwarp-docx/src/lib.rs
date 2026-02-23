@@ -1,14 +1,16 @@
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::process;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
 use docwarp_core::{
     Block, ConversionWarning, Document, Inline, StyleMap, WarningCode, model::inline_text,
 };
+use latex2mathml::{DisplayStyle, latex_to_mathml};
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
 use reqwest::blocking::Client;
@@ -23,6 +25,8 @@ const LIST_BASE_INDENT_TWIPS: u32 = 720;
 const LIST_INDENT_STEP_TWIPS: u32 = 360;
 const CODE_LANG_MARKER_PREFIX: &str = "[[docwarp-code-lang:";
 const CODE_LANG_MARKER_SUFFIX: &str = "]]";
+const EQUATION_MARKER_PREFIX: &str = "[[docwarp-eq:";
+const EQUATION_MARKER_SUFFIX: &str = "]]";
 
 #[derive(Debug, Clone)]
 pub struct DocxWriteOptions {
@@ -180,6 +184,22 @@ struct PendingList {
     item_ordered: Vec<bool>,
 }
 
+#[derive(Default)]
+struct EquationCapture {
+    display: bool,
+    text: String,
+    unsupported: bool,
+    depth: usize,
+}
+
+#[derive(Debug, Clone, Default)]
+struct MathMlNode {
+    name: String,
+    text: String,
+    attributes: BTreeMap<String, String>,
+    children: Vec<MathMlNode>,
+}
+
 #[derive(Debug, Clone)]
 struct TemplatePackage {
     entries: BTreeMap<String, Vec<u8>>,
@@ -244,27 +264,42 @@ pub fn write_docx(
     output_entries.insert("docProps/core.xml".to_string(), build_core_properties_xml());
     output_entries.insert("docProps/app.xml".to_string(), build_app_properties_xml());
 
-    let file = fs::File::create(output_path)
-        .with_context(|| format!("failed creating output DOCX: {}", output_path.display()))?;
-    let mut zip = ZipWriter::new(file);
-    let file_options = SimpleFileOptions::default();
+    let output_parent = output_path.parent().unwrap_or_else(|| Path::new("."));
+    let mut temp_output = tempfile::Builder::new()
+        .prefix(".docwarp-")
+        .suffix(".docx.tmp")
+        .tempfile_in(output_parent)
+        .with_context(|| {
+            format!(
+                "failed creating temporary DOCX output in {}",
+                output_parent.display()
+            )
+        })?;
 
-    for (path, bytes) in output_entries {
-        write_zip_entry(&mut zip, &path, &bytes, file_options)?;
+    {
+        let mut zip = ZipWriter::new(temp_output.as_file_mut());
+        let file_options = SimpleFileOptions::default();
+
+        for (path, bytes) in output_entries {
+            write_zip_entry(&mut zip, &path, &bytes, file_options)?;
+        }
+
+        for media in &state.media_files {
+            let path = format!("word/{}", media.target);
+            write_zip_entry(&mut zip, &path, &media.bytes, file_options)?;
+        }
+
+        zip.finish().context("failed finalizing DOCX zip")?;
     }
 
-    for media in &state.media_files {
-        let path = format!("word/{}", media.target);
-        write_zip_entry(&mut zip, &path, &media.bytes, file_options)?;
-    }
-
-    zip.finish().context("failed finalizing DOCX zip")?;
+    let _ = temp_output.as_file_mut().sync_all();
+    persist_tempfile_replace(temp_output, output_path, "DOCX output")?;
 
     Ok(warnings)
 }
 
-fn write_zip_entry(
-    zip: &mut ZipWriter<fs::File>,
+fn write_zip_entry<W: Write + Seek>(
+    zip: &mut ZipWriter<W>,
     path: &str,
     bytes: &[u8],
     file_options: SimpleFileOptions,
@@ -274,6 +309,74 @@ fn write_zip_entry(
     zip.write_all(bytes)
         .with_context(|| format!("failed writing zip entry bytes: {path}"))?;
     Ok(())
+}
+
+fn persist_tempfile_replace(
+    tempfile: tempfile::NamedTempFile,
+    destination: &Path,
+    label: &str,
+) -> Result<()> {
+    match tempfile.persist(destination) {
+        Ok(_) => Ok(()),
+        Err(err) => {
+            if err.error.kind() != io::ErrorKind::AlreadyExists || !destination.exists() {
+                return Err(anyhow!(
+                    "failed writing {} at {}: {}",
+                    label,
+                    destination.display(),
+                    err.error
+                ));
+            }
+
+            let backup_path = temporary_backup_path(destination);
+            fs::rename(destination, &backup_path).with_context(|| {
+                format!(
+                    "failed moving existing {} to backup before replacement: {} -> {}",
+                    label,
+                    destination.display(),
+                    backup_path.display()
+                )
+            })?;
+
+            match err.file.persist(destination) {
+                Ok(_) => {
+                    let _ = fs::remove_file(&backup_path);
+                    Ok(())
+                }
+                Err(second_err) => {
+                    let _ = fs::remove_file(second_err.file.path());
+                    let restore_result = fs::rename(&backup_path, destination);
+                    let restore_note = match restore_result {
+                        Ok(_) => String::new(),
+                        Err(restore_err) => format!(
+                            " (also failed restoring original file from {}: {restore_err})",
+                            backup_path.display()
+                        ),
+                    };
+                    Err(anyhow!(
+                        "failed replacing {} at {}: {}{}",
+                        label,
+                        destination.display(),
+                        second_err.error,
+                        restore_note
+                    ))
+                }
+            }
+        }
+    }
+}
+
+fn temporary_backup_path(destination: &Path) -> PathBuf {
+    let parent = destination.parent().unwrap_or_else(|| Path::new("."));
+    let name = destination
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("output");
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    parent.join(format!(".{name}.docwarp-backup-{}-{now}", process::id()))
 }
 
 fn build_document_xml(
@@ -326,18 +429,29 @@ fn build_document_xml(
                 )?);
             }
             Block::Paragraph(content) => {
-                body.push_str(&render_paragraph(
-                    content,
-                    &options.style_map.docx_style_for("paragraph"),
-                    None,
-                    Some(240),
-                    None,
-                    None,
-                    markdown_base_dir,
-                    options,
-                    state,
-                    warnings,
-                )?);
+                if let Some(tex) = single_display_equation(content) {
+                    body.push_str(&render_equation_paragraph(
+                        tex,
+                        &options.style_map.docx_style_for("equation_block"),
+                        &options.style_map.docx_style_for("equation_inline"),
+                        None,
+                        Some(240),
+                        warnings,
+                    ));
+                } else {
+                    body.push_str(&render_paragraph(
+                        content,
+                        &options.style_map.docx_style_for("paragraph"),
+                        None,
+                        Some(240),
+                        None,
+                        None,
+                        markdown_base_dir,
+                        options,
+                        state,
+                        warnings,
+                    )?);
+                }
             }
             Block::BlockQuote(content) => {
                 body.push_str(&render_paragraph(
@@ -581,6 +695,47 @@ fn render_paragraph(
     Ok(out)
 }
 
+fn single_display_equation(inlines: &[Inline]) -> Option<&str> {
+    match inlines {
+        [Inline::Equation { tex, display: true }] => Some(tex.as_str()),
+        _ => None,
+    }
+}
+
+fn render_equation_paragraph(
+    tex: &str,
+    paragraph_style: &str,
+    equation_inline_style: &str,
+    spacing_before_twips: Option<u32>,
+    spacing_after_twips: Option<u32>,
+    warnings: &mut Vec<ConversionWarning>,
+) -> String {
+    let mut out = String::new();
+    out.push_str("<w:p><w:pPr>");
+    out.push_str(&format!(
+        "<w:pStyle w:val=\"{}\"/>",
+        escape_xml(paragraph_style)
+    ));
+    if spacing_before_twips.is_some() || spacing_after_twips.is_some() {
+        let mut spacing = String::from("<w:spacing");
+        if let Some(before) = spacing_before_twips {
+            spacing.push_str(&format!(" w:before=\"{before}\""));
+        }
+        if let Some(after) = spacing_after_twips {
+            spacing.push_str(&format!(" w:after=\"{after}\""));
+        }
+        spacing.push_str("/>");
+        out.push_str(&spacing);
+    }
+    out.push_str("</w:pPr>");
+    out.push_str("<m:oMathPara>");
+    out.push_str(&render_omml(tex, equation_inline_style, warnings));
+    out.push_str("</m:oMathPara>");
+    out.push_str(&render_hidden_equation_marker(tex, true));
+    out.push_str("</w:p>");
+    out
+}
+
 fn render_inlines(
     inlines: &[Inline],
     markdown_base_dir: &Path,
@@ -694,6 +849,14 @@ fn render_inline(
                 ));
             }
         }
+        Inline::Equation { tex, display } => {
+            out.push_str(&render_omml(
+                tex,
+                &options.style_map.docx_style_for("equation_inline"),
+                warnings,
+            ));
+            out.push_str(&render_hidden_equation_marker(tex, *display));
+        }
     }
 
     Ok(())
@@ -733,6 +896,838 @@ fn render_hidden_code_language_marker(language: &str) -> String {
         "<w:r><w:rPr><w:vanish/></w:rPr><w:t xml:space=\"preserve\">{}</w:t></w:r>",
         escape_xml(&marker)
     )
+}
+
+fn render_hidden_equation_marker(tex: &str, display: bool) -> String {
+    let kind = if display { "d" } else { "i" };
+    let marker = format!(
+        "{EQUATION_MARKER_PREFIX}{kind}:{}{EQUATION_MARKER_SUFFIX}",
+        encode_hex(tex)
+    );
+    format!(
+        "<w:r><w:rPr><w:vanish/></w:rPr><w:t xml:space=\"preserve\">{}</w:t></w:r>",
+        escape_xml(&marker)
+    )
+}
+
+fn encode_hex(input: &str) -> String {
+    let mut out = String::with_capacity(input.len() * 2);
+    for byte in input.as_bytes() {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
+}
+
+fn render_omml(
+    tex: &str,
+    equation_inline_style: &str,
+    warnings: &mut Vec<ConversionWarning>,
+) -> String {
+    match render_structured_omml(tex, equation_inline_style) {
+        Ok(Some(body)) if !body.trim().is_empty() => format!("<m:oMath>{body}</m:oMath>"),
+        Ok(_) => render_linear_omml(tex, equation_inline_style),
+        Err(err) => {
+            warnings.push(ConversionWarning::new(
+                WarningCode::UnsupportedFeature,
+                format!(
+                    "Unable to emit structured OMML for equation; using linear fallback: {err}"
+                ),
+            ));
+            render_linear_omml(tex, equation_inline_style)
+        }
+    }
+}
+
+fn render_linear_omml(tex: &str, _equation_inline_style: &str) -> String {
+    let mut out = String::new();
+    out.push_str("<m:oMath><m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr>");
+    out.push_str(&format!("<m:t>{}</m:t>", escape_xml(tex.trim())));
+    out.push_str("</m:r></m:oMath>");
+    out
+}
+
+fn render_structured_omml(tex: &str, _equation_inline_style: &str) -> Result<Option<String>> {
+    let trimmed = tex.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+
+    let mathml = latex_to_mathml(trimmed, DisplayStyle::Inline)
+        .map_err(|err| anyhow!("LaTeX parse failed: {err}"))?;
+    if mathml.contains("[PARSE ERROR:") {
+        return Err(anyhow!(
+            "LaTeX expression contains unsupported commands for structured OMML conversion"
+        ));
+    }
+    let root = parse_xml_node_tree(&mathml)?;
+
+    let body = if root.name == "math" {
+        render_mathml_nodes_to_omml(&root.children)
+    } else {
+        render_mathml_node_to_omml(&root)
+    };
+
+    if body.trim().is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(body))
+    }
+}
+
+fn parse_xml_node_tree(xml: &str) -> Result<MathMlNode> {
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(false);
+
+    let mut stack: Vec<MathMlNode> = Vec::new();
+    let mut root: Option<MathMlNode> = None;
+    let mut buf = Vec::new();
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(start)) => {
+                stack.push(parse_xml_start_node(&start));
+            }
+            Ok(Event::Empty(start)) => {
+                let node = parse_xml_start_node(&start);
+                if let Some(parent) = stack.last_mut() {
+                    parent.children.push(node);
+                } else if root.is_none() {
+                    root = Some(node);
+                }
+            }
+            Ok(Event::Text(text)) => {
+                if let Some(node) = stack.last_mut() {
+                    node.text.push_str(&decode_text(&reader, text)?);
+                }
+            }
+            Ok(Event::CData(cdata)) => {
+                if let Some(node) = stack.last_mut() {
+                    let decoded = reader.decoder().decode(cdata.as_ref())?.into_owned();
+                    node.text.push_str(&decoded);
+                }
+            }
+            Ok(Event::End(_)) => {
+                if let Some(node) = stack.pop() {
+                    if let Some(parent) = stack.last_mut() {
+                        parent.children.push(node);
+                    } else {
+                        root = Some(node);
+                    }
+                }
+            }
+            Ok(Event::Eof) => break,
+            Ok(_) => {}
+            Err(err) => return Err(anyhow!("failed parsing generated MathML: {err}")),
+        }
+
+        buf.clear();
+    }
+
+    root.ok_or_else(|| anyhow!("generated MathML did not contain a root node"))
+}
+
+fn parse_xml_start_node(start: &BytesStart<'_>) -> MathMlNode {
+    let mut attributes = BTreeMap::new();
+    for attribute in start.attributes().flatten() {
+        let key = String::from_utf8_lossy(local_name(attribute.key.as_ref())).to_string();
+        let value = String::from_utf8_lossy(attribute.value.as_ref()).to_string();
+        attributes.insert(key, value);
+    }
+
+    MathMlNode {
+        name: String::from_utf8_lossy(local_name(start.name().as_ref())).to_string(),
+        text: String::new(),
+        attributes,
+        children: Vec::new(),
+    }
+}
+
+fn render_mathml_nodes_to_omml(nodes: &[MathMlNode]) -> String {
+    let mut out = String::new();
+    let mut index = 0usize;
+    while index < nodes.len() {
+        if let Some(next_node) = nodes.get(index + 1) {
+            if let Some(arg_extremum) = render_arg_extremum_pair(&nodes[index], next_node) {
+                out.push_str(&arg_extremum);
+                index += 2;
+                continue;
+            }
+        }
+
+        if let Some((operator_node, sub_node, sup_node)) = extract_nary_limits(&nodes[index]) {
+            out.push_str(&render_omml_nary(
+                &mathml_token_text(operator_node),
+                sub_node.map(render_mathml_node_to_omml),
+                sup_node.map(render_mathml_node_to_omml),
+                render_mathml_nodes_to_omml(&nodes[index + 1..]),
+            ));
+            break;
+        }
+
+        out.push_str(&render_mathml_node_to_omml(&nodes[index]));
+        index += 1;
+    }
+    out
+}
+
+fn render_mathml_node_to_omml(node: &MathMlNode) -> String {
+    match node.name.as_str() {
+        "math" | "mstyle" | "semantics" => render_mathml_nodes_to_omml(&node.children),
+        "annotation" => String::new(),
+        "mrow" => render_mathml_mrow(node),
+        "mi" | "mn" | "mo" | "mtext" => {
+            let text = mathml_token_text(node);
+            if text.is_empty() {
+                String::new()
+            } else {
+                render_omml_run(&text)
+            }
+        }
+        "msup" => {
+            let Some(base_node) = node.children.first() else {
+                return render_mathml_nodes_to_omml(&node.children);
+            };
+            let Some(sup_node) = node.children.get(1) else {
+                return render_mathml_nodes_to_omml(&node.children);
+            };
+
+            if is_nary_operator_node(base_node) {
+                return render_omml_nary(
+                    &mathml_token_text(base_node),
+                    None,
+                    Some(render_mathml_node_to_omml(sup_node)),
+                    String::new(),
+                );
+            }
+            if is_limit_like_operator_node(base_node) {
+                let base = render_mathml_node_to_omml(base_node);
+                let sup = render_mathml_node_to_omml(sup_node);
+                return render_limit_like_operator(base, None, Some(sup));
+            }
+
+            let base = render_mathml_node_to_omml(base_node);
+            let sup = render_mathml_node_to_omml(sup_node);
+            format!(
+                "<m:sSup>{}{}</m:sSup>",
+                wrap_omml_arg("e", base),
+                wrap_omml_arg("sup", sup)
+            )
+        }
+        "msub" => {
+            let Some(base_node) = node.children.first() else {
+                return render_mathml_nodes_to_omml(&node.children);
+            };
+            let Some(sub_node) = node.children.get(1) else {
+                return render_mathml_nodes_to_omml(&node.children);
+            };
+
+            if is_nary_operator_node(base_node) {
+                return render_omml_nary(
+                    &mathml_token_text(base_node),
+                    Some(render_mathml_node_to_omml(sub_node)),
+                    None,
+                    String::new(),
+                );
+            }
+            if is_limit_like_operator_node(base_node) {
+                let base = render_mathml_node_to_omml(base_node);
+                let sub = render_mathml_node_to_omml(sub_node);
+                return render_limit_like_operator(base, Some(sub), None);
+            }
+
+            let base = render_mathml_node_to_omml(base_node);
+            let sub = render_mathml_node_to_omml(sub_node);
+            format!(
+                "<m:sSub>{}{}</m:sSub>",
+                wrap_omml_arg("e", base),
+                wrap_omml_arg("sub", sub)
+            )
+        }
+        "msubsup" => {
+            let Some(base_node) = node.children.first() else {
+                return render_mathml_nodes_to_omml(&node.children);
+            };
+            let Some(sub_node) = node.children.get(1) else {
+                return render_mathml_nodes_to_omml(&node.children);
+            };
+            let Some(sup_node) = node.children.get(2) else {
+                return render_mathml_nodes_to_omml(&node.children);
+            };
+
+            if is_nary_operator_node(base_node) {
+                return render_omml_nary(
+                    &mathml_token_text(base_node),
+                    Some(render_mathml_node_to_omml(sub_node)),
+                    Some(render_mathml_node_to_omml(sup_node)),
+                    String::new(),
+                );
+            }
+            if is_limit_like_operator_node(base_node) {
+                let base = render_mathml_node_to_omml(base_node);
+                let sub = render_mathml_node_to_omml(sub_node);
+                let sup = render_mathml_node_to_omml(sup_node);
+                return render_limit_like_operator(base, Some(sub), Some(sup));
+            }
+
+            let base = render_mathml_node_to_omml(base_node);
+            let sub = render_mathml_node_to_omml(sub_node);
+            let sup = render_mathml_node_to_omml(sup_node);
+            format!(
+                "<m:sSubSup>{}{}{}</m:sSubSup>",
+                wrap_omml_arg("e", base),
+                wrap_omml_arg("sub", sub),
+                wrap_omml_arg("sup", sup)
+            )
+        }
+        "mfrac" => {
+            let Some(num_node) = node.children.first() else {
+                return render_mathml_nodes_to_omml(&node.children);
+            };
+            let Some(den_node) = node.children.get(1) else {
+                return render_mathml_nodes_to_omml(&node.children);
+            };
+
+            let mut out = String::new();
+            out.push_str("<m:f>");
+            if node
+                .attributes
+                .get("linethickness")
+                .map(|value| value.trim() == "0")
+                .unwrap_or(false)
+            {
+                out.push_str("<m:fPr><m:type m:val=\"noBar\"/></m:fPr>");
+            }
+            out.push_str(&wrap_omml_arg("num", render_mathml_node_to_omml(num_node)));
+            out.push_str(&wrap_omml_arg("den", render_mathml_node_to_omml(den_node)));
+            out.push_str("</m:f>");
+            out
+        }
+        "msqrt" => {
+            let content = render_mathml_nodes_to_omml(&node.children);
+            format!(
+                "<m:rad><m:radPr><m:degHide m:val=\"1\"/></m:radPr>{}</m:rad>",
+                wrap_omml_arg("e", content)
+            )
+        }
+        "mroot" => {
+            let Some(base_node) = node.children.first() else {
+                return render_mathml_nodes_to_omml(&node.children);
+            };
+            let Some(deg_node) = node.children.get(1) else {
+                return render_mathml_nodes_to_omml(&node.children);
+            };
+
+            let base = render_mathml_node_to_omml(base_node);
+            let degree = render_mathml_node_to_omml(deg_node);
+            format!(
+                "<m:rad>{}{}</m:rad>",
+                wrap_omml_arg("deg", degree),
+                wrap_omml_arg("e", base)
+            )
+        }
+        "mfenced" => {
+            let open = node
+                .attributes
+                .get("open")
+                .map(String::as_str)
+                .unwrap_or("(");
+            let close = node
+                .attributes
+                .get("close")
+                .map(String::as_str)
+                .unwrap_or(")");
+            render_mathml_delimited(open, close, render_mathml_nodes_to_omml(&node.children))
+        }
+        "mtable" => render_mathml_table(node, None, None),
+        "mtr" | "mtd" => render_mathml_nodes_to_omml(&node.children),
+        "mover" => {
+            let Some(base_node) = node.children.first() else {
+                return render_mathml_nodes_to_omml(&node.children);
+            };
+            let Some(over_node) = node.children.get(1) else {
+                return render_mathml_nodes_to_omml(&node.children);
+            };
+
+            let base = render_mathml_node_to_omml(base_node);
+            let over = render_mathml_node_to_omml(over_node);
+            if over_node
+                .attributes
+                .get("accent")
+                .map(|value| value == "true")
+                .unwrap_or(false)
+            {
+                let accent_chr = mathml_token_text(over_node);
+                if !accent_chr.is_empty() {
+                    return format!(
+                        "<m:acc><m:accPr><m:chr m:val=\"{}\"/></m:accPr>{}</m:acc>",
+                        escape_xml(&accent_chr),
+                        wrap_omml_arg("e", base)
+                    );
+                }
+            }
+
+            format!(
+                "<m:sSup>{}{}</m:sSup>",
+                wrap_omml_arg("e", base),
+                wrap_omml_arg("sup", over)
+            )
+        }
+        "munder" => {
+            let Some(base_node) = node.children.first() else {
+                return render_mathml_nodes_to_omml(&node.children);
+            };
+            let Some(under_node) = node.children.get(1) else {
+                return render_mathml_nodes_to_omml(&node.children);
+            };
+
+            if is_nary_operator_node(base_node) {
+                return render_omml_nary(
+                    &mathml_token_text(base_node),
+                    Some(render_mathml_node_to_omml(under_node)),
+                    None,
+                    String::new(),
+                );
+            }
+            if is_limit_like_operator_node(base_node) {
+                let base = render_mathml_node_to_omml(base_node);
+                let sub = render_mathml_node_to_omml(under_node);
+                return render_limit_like_operator(base, Some(sub), None);
+            }
+
+            let base = render_mathml_node_to_omml(base_node);
+            let under = render_mathml_node_to_omml(under_node);
+            format!(
+                "<m:sSub>{}{}</m:sSub>",
+                wrap_omml_arg("e", base),
+                wrap_omml_arg("sub", under)
+            )
+        }
+        "munderover" => {
+            let Some(base_node) = node.children.first() else {
+                return render_mathml_nodes_to_omml(&node.children);
+            };
+            let Some(under_node) = node.children.get(1) else {
+                return render_mathml_nodes_to_omml(&node.children);
+            };
+            let Some(over_node) = node.children.get(2) else {
+                return render_mathml_nodes_to_omml(&node.children);
+            };
+
+            if is_nary_operator_node(base_node) {
+                return render_omml_nary(
+                    &mathml_token_text(base_node),
+                    Some(render_mathml_node_to_omml(under_node)),
+                    Some(render_mathml_node_to_omml(over_node)),
+                    String::new(),
+                );
+            }
+            if is_limit_like_operator_node(base_node) {
+                let base = render_mathml_node_to_omml(base_node);
+                let sub = render_mathml_node_to_omml(under_node);
+                let sup = render_mathml_node_to_omml(over_node);
+                return render_limit_like_operator(base, Some(sub), Some(sup));
+            }
+
+            let base = render_mathml_node_to_omml(base_node);
+            let under = render_mathml_node_to_omml(under_node);
+            let over = render_mathml_node_to_omml(over_node);
+            format!(
+                "<m:sSubSup>{}{}{}</m:sSubSup>",
+                wrap_omml_arg("e", base),
+                wrap_omml_arg("sub", under),
+                wrap_omml_arg("sup", over)
+            )
+        }
+        "mspace" => {
+            let width = node
+                .attributes
+                .get("width")
+                .map(String::as_str)
+                .unwrap_or("");
+            if width.trim().is_empty() || width.trim() == "0" || width.trim() == "0em" {
+                String::new()
+            } else {
+                render_omml_run(" ")
+            }
+        }
+        _ => {
+            if !node.children.is_empty() {
+                render_mathml_nodes_to_omml(&node.children)
+            } else {
+                let text = normalize_math_token_text(&node.text, node.name.as_str());
+                if text.is_empty() {
+                    String::new()
+                } else {
+                    render_omml_run(&text)
+                }
+            }
+        }
+    }
+}
+
+fn render_mathml_mrow(node: &MathMlNode) -> String {
+    let significant: Vec<&MathMlNode> = node
+        .children
+        .iter()
+        .filter(|child| !is_mathml_whitespace_node(child))
+        .collect();
+
+    if significant.len() == 3 && significant[1].name == "mtable" {
+        let open = mathml_token_text(significant[0]);
+        let close = mathml_token_text(significant[2]);
+        if !open.is_empty() && !close.is_empty() {
+            return render_mathml_table(significant[1], Some(open.as_str()), Some(close.as_str()));
+        }
+    }
+
+    let mut out = String::new();
+    let mut index = 0usize;
+    while index < significant.len() {
+        if let Some(next_node) = significant.get(index + 1) {
+            if let Some(arg_extremum) = render_arg_extremum_pair(significant[index], next_node) {
+                out.push_str(&arg_extremum);
+                index += 2;
+                continue;
+            }
+        }
+
+        if let Some((operator_node, sub_node, sup_node)) = extract_nary_limits(significant[index]) {
+            out.push_str(&render_omml_nary(
+                &mathml_token_text(operator_node),
+                sub_node.map(render_mathml_node_to_omml),
+                sup_node.map(render_mathml_node_to_omml),
+                render_mathml_node_refs_to_omml(&significant[index + 1..]),
+            ));
+            return out;
+        }
+
+        out.push_str(&render_mathml_node_to_omml(significant[index]));
+        index += 1;
+    }
+
+    if out.is_empty() {
+        render_mathml_nodes_to_omml(&node.children)
+    } else {
+        out
+    }
+}
+
+fn render_mathml_node_refs_to_omml(nodes: &[&MathMlNode]) -> String {
+    let mut out = String::new();
+    for node in nodes {
+        out.push_str(&render_mathml_node_to_omml(node));
+    }
+    out
+}
+
+fn extract_nary_limits<'a>(
+    node: &'a MathMlNode,
+) -> Option<(
+    &'a MathMlNode,
+    Option<&'a MathMlNode>,
+    Option<&'a MathMlNode>,
+)> {
+    match node.name.as_str() {
+        "msub" | "munder" => {
+            let base = node.children.first()?;
+            let sub = node.children.get(1)?;
+            if is_nary_operator_node(base) {
+                Some((base, Some(sub), None))
+            } else {
+                None
+            }
+        }
+        "msup" | "mover" => {
+            let base = node.children.first()?;
+            let sup = node.children.get(1)?;
+            if is_nary_operator_node(base) {
+                Some((base, None, Some(sup)))
+            } else {
+                None
+            }
+        }
+        "msubsup" | "munderover" => {
+            let base = node.children.first()?;
+            let sub = node.children.get(1)?;
+            let sup = node.children.get(2)?;
+            if is_nary_operator_node(base) {
+                Some((base, Some(sub), Some(sup)))
+            } else {
+                None
+            }
+        }
+        _ if is_nary_operator_node(node) => Some((node, None, None)),
+        _ => None,
+    }
+}
+
+fn render_arg_extremum_pair(arg_node: &MathMlNode, limit_node: &MathMlNode) -> Option<String> {
+    if !is_arg_prefix_node(arg_node) {
+        return None;
+    }
+
+    let (operator, sub, sup) = extract_limit_like_limits(limit_node)?;
+    let suffix = operator.to_ascii_lowercase();
+    if !matches!(suffix.as_str(), "min" | "max") {
+        return None;
+    }
+
+    let base = render_omml_run(&format!("arg{suffix}"));
+    Some(render_limit_like_operator(
+        base,
+        sub.map(render_mathml_node_to_omml),
+        sup.map(render_mathml_node_to_omml),
+    ))
+}
+
+fn extract_limit_like_limits<'a>(
+    node: &'a MathMlNode,
+) -> Option<(String, Option<&'a MathMlNode>, Option<&'a MathMlNode>)> {
+    match node.name.as_str() {
+        "msub" | "munder" => {
+            let base = node.children.first()?;
+            let sub = node.children.get(1)?;
+            if is_limit_like_operator_node(base) {
+                Some((mathml_token_text(base), Some(sub), None))
+            } else {
+                None
+            }
+        }
+        "msup" | "mover" => {
+            let base = node.children.first()?;
+            let sup = node.children.get(1)?;
+            if is_limit_like_operator_node(base) {
+                Some((mathml_token_text(base), None, Some(sup)))
+            } else {
+                None
+            }
+        }
+        "msubsup" | "munderover" => {
+            let base = node.children.first()?;
+            let sub = node.children.get(1)?;
+            let sup = node.children.get(2)?;
+            if is_limit_like_operator_node(base) {
+                Some((mathml_token_text(base), Some(sub), Some(sup)))
+            } else {
+                None
+            }
+        }
+        _ if is_limit_like_operator_node(node) => Some((mathml_token_text(node), None, None)),
+        _ => None,
+    }
+}
+
+fn render_omml_nary(
+    operator: &str,
+    sub: Option<String>,
+    sup: Option<String>,
+    operand: String,
+) -> String {
+    let mut out = String::new();
+    out.push_str("<m:nary><m:naryPr>");
+    if !operator.is_empty() {
+        out.push_str(&format!("<m:chr m:val=\"{}\"/>", escape_xml(operator)));
+    }
+    out.push_str("<m:limLoc m:val=\"undOvr\"/>");
+    out.push_str("</m:naryPr>");
+    out.push_str(&wrap_omml_arg("sub", sub.unwrap_or_default()));
+    out.push_str(&wrap_omml_arg("sup", sup.unwrap_or_default()));
+    out.push_str(&wrap_omml_arg("e", operand));
+    out.push_str("</m:nary>");
+    out
+}
+
+fn render_omml_lim_low(base: String, lim: String) -> String {
+    format!(
+        "<m:limLow>{}{}</m:limLow>",
+        wrap_omml_arg("e", base),
+        wrap_omml_arg("lim", lim)
+    )
+}
+
+fn render_omml_lim_upp(base: String, lim: String) -> String {
+    format!(
+        "<m:limUpp>{}{}</m:limUpp>",
+        wrap_omml_arg("e", base),
+        wrap_omml_arg("lim", lim)
+    )
+}
+
+fn render_limit_like_operator(base: String, sub: Option<String>, sup: Option<String>) -> String {
+    match (sub, sup) {
+        (Some(sub), None) => render_omml_lim_low(base, sub),
+        (None, Some(sup)) => render_omml_lim_upp(base, sup),
+        (Some(sub), Some(sup)) => format!(
+            "<m:sSubSup>{}{}{}</m:sSubSup>",
+            wrap_omml_arg("e", base),
+            wrap_omml_arg("sub", sub),
+            wrap_omml_arg("sup", sup)
+        ),
+        (None, None) => base,
+    }
+}
+
+fn render_mathml_table(table: &MathMlNode, open: Option<&str>, close: Option<&str>) -> String {
+    let rows: Vec<&MathMlNode> = table
+        .children
+        .iter()
+        .filter(|child| child.name == "mtr")
+        .collect();
+
+    if rows.is_empty() {
+        return render_mathml_nodes_to_omml(&table.children);
+    }
+
+    let mut matrix = String::new();
+    matrix.push_str("<m:m>");
+
+    for row in rows {
+        let cells: Vec<&MathMlNode> = row
+            .children
+            .iter()
+            .filter(|child| child.name == "mtd")
+            .collect();
+
+        matrix.push_str("<m:mr>");
+        if cells.is_empty() {
+            matrix.push_str(&wrap_omml_arg(
+                "e",
+                render_mathml_nodes_to_omml(&row.children),
+            ));
+        } else {
+            for cell in cells {
+                matrix.push_str(&wrap_omml_arg(
+                    "e",
+                    render_mathml_nodes_to_omml(&cell.children),
+                ));
+            }
+        }
+        matrix.push_str("</m:mr>");
+    }
+
+    matrix.push_str("</m:m>");
+
+    if let Some(open) = open {
+        let close = close.unwrap_or(open);
+        render_mathml_delimited(open, close, matrix)
+    } else {
+        matrix
+    }
+}
+
+fn render_mathml_delimited(open: &str, close: &str, content: String) -> String {
+    let open = if open == "." { "" } else { open };
+    let close = if close == "." { "" } else { close };
+    format!(
+        "<m:d><m:dPr><m:begChr m:val=\"{}\"/><m:endChr m:val=\"{}\"/></m:dPr>{}</m:d>",
+        escape_xml(open),
+        escape_xml(close),
+        wrap_omml_arg("e", content)
+    )
+}
+
+fn wrap_omml_arg(tag: &str, content: String) -> String {
+    let body = if content.trim().is_empty() {
+        empty_omml_expression()
+    } else {
+        content
+    };
+    format!("<m:{tag}>{body}</m:{tag}>")
+}
+
+fn empty_omml_expression() -> String {
+    render_omml_run("")
+}
+
+fn render_omml_run(text: &str) -> String {
+    let preserve = text
+        .chars()
+        .next()
+        .map(char::is_whitespace)
+        .unwrap_or(false)
+        || text
+            .chars()
+            .next_back()
+            .map(char::is_whitespace)
+            .unwrap_or(false)
+        || text.contains("  ");
+    if preserve {
+        format!(
+            "<m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><m:t xml:space=\"preserve\">{}</m:t></m:r>",
+            escape_xml(text)
+        )
+    } else {
+        format!(
+            "<m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><m:t>{}</m:t></m:r>",
+            escape_xml(text)
+        )
+    }
+}
+
+fn mathml_token_text(node: &MathMlNode) -> String {
+    normalize_math_token_text(&collect_mathml_text(node), node.name.as_str())
+}
+
+fn is_nary_operator_node(node: &MathMlNode) -> bool {
+    matches!(
+        mathml_token_text(node).as_str(),
+        "∑" | "∏"
+            | "∐"
+            | "⋃"
+            | "⋂"
+            | "⋁"
+            | "⋀"
+            | "⨁"
+            | "⨂"
+            | "⨀"
+            | "∫"
+            | "∮"
+            | "∯"
+            | "∰"
+    )
+}
+
+fn is_limit_like_operator_node(node: &MathMlNode) -> bool {
+    matches!(
+        mathml_token_text(node).to_ascii_lowercase().as_str(),
+        "min" | "max" | "lim" | "sup" | "inf"
+    )
+}
+
+fn is_arg_prefix_node(node: &MathMlNode) -> bool {
+    mathml_token_text(node).eq_ignore_ascii_case("arg")
+}
+
+fn collect_mathml_text(node: &MathMlNode) -> String {
+    let mut out = node.text.clone();
+    for child in &node.children {
+        out.push_str(&collect_mathml_text(child));
+    }
+    out
+}
+
+fn normalize_math_token_text(value: &str, node_name: &str) -> String {
+    let cleaned = value
+        .replace('\u{2061}', "")
+        .replace('\u{2062}', "")
+        .replace('\u{2063}', "")
+        .replace('\u{2064}', "")
+        .replace('\u{00A0}', " ");
+    if node_name == "mtext" {
+        cleaned
+    } else {
+        cleaned.trim().to_string()
+    }
+}
+
+fn is_mathml_whitespace_node(node: &MathMlNode) -> bool {
+    if node.name == "mspace" {
+        return true;
+    }
+    if node.name == "mtext" || node.name == "mi" || node.name == "mn" || node.name == "mo" {
+        return mathml_token_text(node).trim().is_empty();
+    }
+    false
 }
 
 fn render_image_run(
@@ -1074,6 +2069,8 @@ fn default_styles_xml() -> &'static str {
   <w:style w:type=\"paragraph\" w:styleId=\"Heading6\"><w:name w:val=\"heading 6\"/><w:basedOn w:val=\"Normal\"/><w:qFormat/><w:rPr><w:b/><w:sz w:val=\"18\"/></w:rPr></w:style>
   <w:style w:type=\"paragraph\" w:styleId=\"Quote\"><w:name w:val=\"Quote\"/><w:basedOn w:val=\"Normal\"/><w:pPr><w:ind w:left=\"720\"/></w:pPr><w:rPr><w:i/></w:rPr></w:style>
   <w:style w:type=\"paragraph\" w:styleId=\"Code\"><w:name w:val=\"Code\"/><w:basedOn w:val=\"Normal\"/><w:pPr><w:spacing w:line=\"240\"/></w:pPr><w:rPr><w:rFonts w:ascii=\"Consolas\" w:hAnsi=\"Consolas\"/><w:sz w:val=\"20\"/></w:rPr></w:style>
+  <w:style w:type=\"paragraph\" w:styleId=\"Equation\"><w:name w:val=\"Equation\"/><w:basedOn w:val=\"Normal\"/></w:style>
+  <w:style w:type=\"character\" w:styleId=\"EquationInline\"><w:name w:val=\"Equation Inline\"/></w:style>
   <w:style w:type=\"paragraph\" w:styleId=\"ListBullet\"><w:name w:val=\"List Bullet\"/><w:basedOn w:val=\"Normal\"/><w:pPr><w:ind w:left=\"720\"/></w:pPr></w:style>
   <w:style w:type=\"paragraph\" w:styleId=\"ListNumber\"><w:name w:val=\"List Number\"/><w:basedOn w:val=\"Normal\"/><w:pPr><w:ind w:left=\"720\"/></w:pPr></w:style>
   <w:style w:type=\"table\" w:styleId=\"Table\"><w:name w:val=\"Table\"/></w:style>
@@ -1246,7 +2243,10 @@ pub fn read_docx(
     let mut run_style = RunStyle::default();
     let mut current_hyperlink: Option<(String, Vec<Inline>)> = None;
     let mut pending_list: Option<PendingList> = None;
-    let mut in_text_node = false;
+    let mut in_word_text_node = false;
+    let mut in_math_text_node = false;
+    let mut math_para_depth = 0usize;
+    let mut current_equation: Option<EquationCapture> = None;
 
     let mut reader = Reader::from_str(&document_xml);
     reader.config_mut().trim_text(false);
@@ -1256,53 +2256,103 @@ pub fn read_docx(
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(start)) => {
                 let name = start.name().as_ref().to_vec();
+                if is_math_tag(&name, b"oMathPara") {
+                    math_para_depth = math_para_depth.saturating_add(1);
+                }
+                if is_math_tag(&name, b"oMath") {
+                    begin_equation_capture(&mut current_equation, math_para_depth > 0);
+                }
+                if is_math_tag(&name, b"t") && current_equation.is_some() {
+                    in_math_text_node = true;
+                }
+                mark_equation_unsupported_if_needed(&name, &mut current_equation);
+
                 match local_name(&name) {
-                    b"t" => in_text_node = true,
-                    b"p" => paragraph = Some(ParseParagraph::default()),
+                    b"t" => {
+                        if is_word_tag(&name, b"t") {
+                            in_word_text_node = true;
+                        }
+                    }
+                    b"p" => {
+                        if is_word_tag(&name, b"p") {
+                            paragraph = Some(ParseParagraph::default());
+                        }
+                    }
                     b"pStyle" => {
-                        if let Some(value) = attr_value(&start, b"val") {
-                            if let Some(paragraph) = paragraph.as_mut() {
-                                paragraph.style = Some(value);
+                        if is_word_tag(&name, b"pStyle") {
+                            if let Some(value) = attr_value(&start, b"val") {
+                                if let Some(paragraph) = paragraph.as_mut() {
+                                    paragraph.style = Some(value);
+                                }
                             }
                         }
                     }
                     b"ind" => {
-                        if let Some(paragraph) = paragraph.as_mut() {
-                            let raw = attr_value(&start, b"left")
-                                .or_else(|| attr_value(&start, b"start"));
-                            paragraph.indent_left = raw.and_then(|value| parse_twips_value(&value));
+                        if is_word_tag(&name, b"ind") {
+                            if let Some(paragraph) = paragraph.as_mut() {
+                                let raw = attr_value(&start, b"left")
+                                    .or_else(|| attr_value(&start, b"start"));
+                                paragraph.indent_left =
+                                    raw.and_then(|value| parse_twips_value(&value));
+                            }
                         }
                     }
-                    b"r" => run_style = RunStyle::default(),
-                    b"b" => run_style.bold = true,
-                    b"i" => run_style.italic = true,
+                    b"r" => {
+                        if is_word_tag(&name, b"r") {
+                            run_style = RunStyle::default();
+                        }
+                    }
+                    b"b" => {
+                        if is_word_tag(&name, b"b") {
+                            run_style.bold = true;
+                        }
+                    }
+                    b"i" => {
+                        if is_word_tag(&name, b"i") {
+                            run_style.italic = true;
+                        }
+                    }
                     b"rStyle" => {
-                        if let Some(value) = attr_value(&start, b"val") {
-                            if value.contains("Code") {
-                                run_style.code = true;
+                        if is_word_tag(&name, b"rStyle") {
+                            if let Some(value) = attr_value(&start, b"val") {
+                                if value.contains("Code") {
+                                    run_style.code = true;
+                                }
                             }
                         }
                     }
                     b"hyperlink" => {
-                        if let Some(rel_id) = attr_value(&start, b"id") {
-                            if let Some(url) = relationships.get(&rel_id) {
-                                current_hyperlink = Some((url.clone(), Vec::new()));
+                        if is_word_tag(&name, b"hyperlink") {
+                            if let Some(rel_id) = attr_value(&start, b"id") {
+                                if let Some(url) = relationships.get(&rel_id) {
+                                    current_hyperlink = Some((url.clone(), Vec::new()));
+                                }
                             }
                         }
                     }
-                    b"br" => push_inline_target(Inline::LineBreak, &mut paragraph, &mut table),
+                    b"br" => {
+                        if is_word_tag(&name, b"br") {
+                            push_inline_target(Inline::LineBreak, &mut paragraph, &mut table);
+                        }
+                    }
                     b"tbl" => {
-                        flush_pending_list(&mut pending_list, &mut blocks);
-                        table = Some(ParseTable::default());
+                        if is_word_tag(&name, b"tbl") {
+                            flush_pending_list(&mut pending_list, &mut blocks);
+                            table = Some(ParseTable::default());
+                        }
                     }
                     b"tr" => {
-                        if let Some(table) = table.as_mut() {
-                            table.current_row.clear();
+                        if is_word_tag(&name, b"tr") {
+                            if let Some(table) = table.as_mut() {
+                                table.current_row.clear();
+                            }
                         }
                     }
                     b"tc" => {
-                        if let Some(table) = table.as_mut() {
-                            table.current_cell.clear();
+                        if is_word_tag(&name, b"tc") {
+                            if let Some(table) = table.as_mut() {
+                                table.current_cell.clear();
+                            }
                         }
                     }
                     b"blip" => {
@@ -1335,31 +2385,61 @@ pub fn read_docx(
             }
             Ok(Event::Empty(start)) => {
                 let name = start.name().as_ref().to_vec();
+                if is_math_tag(&name, b"oMathPara") {
+                    math_para_depth = math_para_depth.saturating_add(1);
+                }
+                if is_math_tag(&name, b"oMath") {
+                    begin_equation_capture(&mut current_equation, math_para_depth > 0);
+                }
+                if is_math_tag(&name, b"t") && current_equation.is_some() {
+                    in_math_text_node = true;
+                }
+                mark_equation_unsupported_if_needed(&name, &mut current_equation);
+
                 match local_name(&name) {
                     b"pStyle" => {
-                        if let Some(value) = attr_value(&start, b"val") {
-                            if let Some(paragraph) = paragraph.as_mut() {
-                                paragraph.style = Some(value);
+                        if is_word_tag(&name, b"pStyle") {
+                            if let Some(value) = attr_value(&start, b"val") {
+                                if let Some(paragraph) = paragraph.as_mut() {
+                                    paragraph.style = Some(value);
+                                }
                             }
                         }
                     }
                     b"ind" => {
-                        if let Some(paragraph) = paragraph.as_mut() {
-                            let raw = attr_value(&start, b"left")
-                                .or_else(|| attr_value(&start, b"start"));
-                            paragraph.indent_left = raw.and_then(|value| parse_twips_value(&value));
-                        }
-                    }
-                    b"b" => run_style.bold = true,
-                    b"i" => run_style.italic = true,
-                    b"rStyle" => {
-                        if let Some(value) = attr_value(&start, b"val") {
-                            if value.contains("Code") {
-                                run_style.code = true;
+                        if is_word_tag(&name, b"ind") {
+                            if let Some(paragraph) = paragraph.as_mut() {
+                                let raw = attr_value(&start, b"left")
+                                    .or_else(|| attr_value(&start, b"start"));
+                                paragraph.indent_left =
+                                    raw.and_then(|value| parse_twips_value(&value));
                             }
                         }
                     }
-                    b"br" => push_inline_target(Inline::LineBreak, &mut paragraph, &mut table),
+                    b"b" => {
+                        if is_word_tag(&name, b"b") {
+                            run_style.bold = true;
+                        }
+                    }
+                    b"i" => {
+                        if is_word_tag(&name, b"i") {
+                            run_style.italic = true;
+                        }
+                    }
+                    b"rStyle" => {
+                        if is_word_tag(&name, b"rStyle") {
+                            if let Some(value) = attr_value(&start, b"val") {
+                                if value.contains("Code") {
+                                    run_style.code = true;
+                                }
+                            }
+                        }
+                    }
+                    b"br" => {
+                        if is_word_tag(&name, b"br") {
+                            push_inline_target(Inline::LineBreak, &mut paragraph, &mut table);
+                        }
+                    }
                     b"blip" => {
                         if let Some(rel_id) = attr_value(&start, b"embed") {
                             if let Some(src) = image_targets.get(&rel_id) {
@@ -1387,15 +2467,45 @@ pub fn read_docx(
                     }
                     _ => {}
                 }
+
+                if is_math_tag(&name, b"t") {
+                    in_math_text_node = false;
+                }
+                if is_math_tag(&name, b"oMath") {
+                    finalize_equation_capture(
+                        &mut current_equation,
+                        &mut paragraph,
+                        &mut table,
+                        &mut warnings,
+                    );
+                    in_math_text_node = false;
+                }
+                if is_math_tag(&name, b"oMathPara") {
+                    math_para_depth = math_para_depth.saturating_sub(1);
+                }
             }
             Ok(Event::Text(text)) => {
-                if !in_text_node {
+                let decoded = decode_text(&reader, text)?;
+                if decoded.is_empty() {
                     buf.clear();
                     continue;
                 }
 
-                let decoded = decode_text(&reader, text)?;
-                if decoded.is_empty() {
+                if in_math_text_node {
+                    if let Some(equation) = current_equation.as_mut() {
+                        equation.text.push_str(&decoded);
+                    }
+                    buf.clear();
+                    continue;
+                }
+
+                if !in_word_text_node {
+                    buf.clear();
+                    continue;
+                }
+
+                if let Some((display, tex)) = parse_equation_marker(&decoded) {
+                    apply_equation_marker(display, tex, &mut paragraph, &mut table);
                     buf.clear();
                     continue;
                 }
@@ -1409,53 +2519,85 @@ pub fn read_docx(
             }
             Ok(Event::End(end)) => {
                 let name = end.name().as_ref().to_vec();
+                if is_math_tag(&name, b"oMath") {
+                    finalize_equation_capture(
+                        &mut current_equation,
+                        &mut paragraph,
+                        &mut table,
+                        &mut warnings,
+                    );
+                    in_math_text_node = false;
+                }
+                if is_math_tag(&name, b"oMathPara") {
+                    math_para_depth = math_para_depth.saturating_sub(1);
+                }
+
                 match local_name(&name) {
-                    b"t" => in_text_node = false,
-                    b"hyperlink" => {
-                        if let Some((url, text)) = current_hyperlink.take() {
-                            push_inline_target(
-                                Inline::Link { text, url },
-                                &mut paragraph,
-                                &mut table,
-                            );
+                    b"t" => {
+                        if is_word_tag(&name, b"t") {
+                            in_word_text_node = false;
+                        }
+                        if is_math_tag(&name, b"t") {
+                            in_math_text_node = false;
                         }
                     }
-                    b"p" => {
-                        if let Some(paragraph) = paragraph.take() {
-                            if let Some(table) = table.as_mut() {
-                                if !table.current_cell.is_empty() && !paragraph.inlines.is_empty() {
-                                    table.current_cell.push(Inline::LineBreak);
-                                }
-                                table.current_cell.extend(paragraph.inlines);
-                            } else {
-                                classify_paragraph(
-                                    paragraph,
-                                    &options.style_map,
-                                    &mut pending_list,
-                                    &mut blocks,
+                    b"hyperlink" => {
+                        if is_word_tag(&name, b"hyperlink") {
+                            if let Some((url, text)) = current_hyperlink.take() {
+                                push_inline_target(
+                                    Inline::Link { text, url },
+                                    &mut paragraph,
+                                    &mut table,
                                 );
                             }
                         }
                     }
+                    b"p" => {
+                        if is_word_tag(&name, b"p") {
+                            if let Some(paragraph) = paragraph.take() {
+                                if let Some(table) = table.as_mut() {
+                                    if !table.current_cell.is_empty()
+                                        && !paragraph.inlines.is_empty()
+                                    {
+                                        table.current_cell.push(Inline::LineBreak);
+                                    }
+                                    table.current_cell.extend(paragraph.inlines);
+                                } else {
+                                    classify_paragraph(
+                                        paragraph,
+                                        &options.style_map,
+                                        &mut pending_list,
+                                        &mut blocks,
+                                    );
+                                }
+                            }
+                        }
+                    }
                     b"tc" => {
-                        if let Some(table) = table.as_mut() {
-                            table
-                                .current_row
-                                .push(std::mem::take(&mut table.current_cell));
+                        if is_word_tag(&name, b"tc") {
+                            if let Some(table) = table.as_mut() {
+                                table
+                                    .current_row
+                                    .push(std::mem::take(&mut table.current_cell));
+                            }
                         }
                     }
                     b"tr" => {
-                        if let Some(table) = table.as_mut() {
-                            table.rows.push(std::mem::take(&mut table.current_row));
+                        if is_word_tag(&name, b"tr") {
+                            if let Some(table) = table.as_mut() {
+                                table.rows.push(std::mem::take(&mut table.current_row));
+                            }
                         }
                     }
                     b"tbl" => {
-                        if let Some(table) = table.take() {
-                            let mut rows = table.rows;
-                            if !rows.is_empty() {
-                                let mut headers = rows.remove(0);
-                                normalize_table_dimensions(&mut headers, &mut rows, 0);
-                                blocks.push(Block::Table { headers, rows });
+                        if is_word_tag(&name, b"tbl") {
+                            if let Some(table) = table.take() {
+                                let mut rows = table.rows;
+                                if !rows.is_empty() {
+                                    let mut headers = rows.remove(0);
+                                    normalize_table_dimensions(&mut headers, &mut rows, 0);
+                                    blocks.push(Block::Table { headers, rows });
+                                }
                             }
                         }
                     }
@@ -1470,6 +2612,19 @@ pub fn read_docx(
         }
 
         buf.clear();
+    }
+
+    if current_equation.is_some() {
+        if let Some(equation) = current_equation.as_mut() {
+            equation.unsupported = true;
+            equation.depth = 1;
+        }
+        finalize_equation_capture(
+            &mut current_equation,
+            &mut paragraph,
+            &mut table,
+            &mut warnings,
+        );
     }
 
     flush_pending_list(&mut pending_list, &mut blocks);
@@ -1797,6 +2952,146 @@ fn push_inline_target(
     }
 }
 
+fn apply_equation_marker(
+    display: bool,
+    tex: String,
+    paragraph: &mut Option<ParseParagraph>,
+    table: &mut Option<ParseTable>,
+) {
+    if let Some(paragraph) = paragraph.as_mut() {
+        if let Some(Inline::Equation {
+            tex: existing_tex,
+            display: existing_display,
+        }) = paragraph.inlines.last_mut()
+        {
+            *existing_tex = tex;
+            *existing_display = display;
+            return;
+        }
+
+        paragraph.inlines.push(Inline::Equation { tex, display });
+        return;
+    }
+
+    if let Some(table) = table.as_mut() {
+        if let Some(Inline::Equation {
+            tex: existing_tex,
+            display: existing_display,
+        }) = table.current_cell.last_mut()
+        {
+            *existing_tex = tex;
+            *existing_display = display;
+            return;
+        }
+
+        table.current_cell.push(Inline::Equation { tex, display });
+    }
+}
+
+fn begin_equation_capture(current: &mut Option<EquationCapture>, display: bool) {
+    if let Some(capture) = current.as_mut() {
+        capture.depth = capture.depth.saturating_add(1);
+        capture.unsupported = true;
+        return;
+    }
+
+    *current = Some(EquationCapture {
+        display,
+        text: String::new(),
+        unsupported: false,
+        depth: 1,
+    });
+}
+
+fn mark_equation_unsupported_if_needed(name: &[u8], current: &mut Option<EquationCapture>) {
+    let Some(capture) = current.as_mut() else {
+        return;
+    };
+    if !is_math_prefixed(name) {
+        return;
+    }
+
+    if !matches!(
+        local_name(name),
+        b"oMath"
+            | b"oMathPara"
+            | b"oMathParaPr"
+            | b"r"
+            | b"rPr"
+            | b"ctrlPr"
+            | b"sty"
+            | b"jc"
+            | b"f"
+            | b"fPr"
+            | b"type"
+            | b"num"
+            | b"den"
+            | b"rad"
+            | b"radPr"
+            | b"degHide"
+            | b"deg"
+            | b"e"
+            | b"sSub"
+            | b"sSup"
+            | b"sSubSup"
+            | b"sub"
+            | b"sup"
+            | b"d"
+            | b"dPr"
+            | b"begChr"
+            | b"endChr"
+            | b"m"
+            | b"mPr"
+            | b"mr"
+            | b"nary"
+            | b"naryPr"
+            | b"limLoc"
+            | b"limLow"
+            | b"limUpp"
+            | b"lim"
+            | b"acc"
+            | b"accPr"
+            | b"chr"
+            | b"t"
+    ) {
+        capture.unsupported = true;
+    }
+}
+
+fn finalize_equation_capture(
+    current: &mut Option<EquationCapture>,
+    paragraph: &mut Option<ParseParagraph>,
+    table: &mut Option<ParseTable>,
+    warnings: &mut Vec<ConversionWarning>,
+) {
+    let Some(capture) = current.as_mut() else {
+        return;
+    };
+    capture.depth = capture.depth.saturating_sub(1);
+    if capture.depth != 0 {
+        return;
+    }
+
+    let capture = current.take().expect("equation capture exists");
+    let tex = capture.text.trim().to_string();
+    if !tex.is_empty() {
+        push_inline_target(
+            Inline::Equation {
+                tex,
+                display: capture.display,
+            },
+            paragraph,
+            table,
+        );
+    }
+    if capture.unsupported {
+        warnings.push(ConversionWarning::new(
+            WarningCode::UnsupportedFeature,
+            "Encountered unsupported OMML equation structure; flattened to linear text",
+        ));
+    }
+}
+
 fn apply_run_style(text: String, style: &RunStyle) -> Inline {
     let base = if style.code {
         Inline::Code(text)
@@ -1824,6 +3119,24 @@ fn decode_text(reader: &Reader<&[u8]>, text: quick_xml::events::BytesText<'_>) -
 
 fn local_name(name: &[u8]) -> &[u8] {
     name.rsplit(|b| *b == b':').next().unwrap_or(name)
+}
+
+fn namespace_prefix(name: &[u8]) -> Option<&[u8]> {
+    let mut parts = name.splitn(2, |byte| *byte == b':');
+    let prefix = parts.next()?;
+    parts.next().map(|_| prefix)
+}
+
+fn is_word_tag(name: &[u8], tag: &[u8]) -> bool {
+    local_name(name) == tag && matches!(namespace_prefix(name), None | Some(b"w"))
+}
+
+fn is_math_tag(name: &[u8], tag: &[u8]) -> bool {
+    local_name(name) == tag && namespace_prefix(name) == Some(b"m")
+}
+
+fn is_math_prefixed(name: &[u8]) -> bool {
+    namespace_prefix(name) == Some(b"m")
 }
 
 fn attr_value(start: &BytesStart<'_>, local_key: &[u8]) -> Option<String> {
@@ -1873,6 +3186,37 @@ fn parse_code_language_marker(raw: &str, prefix: &str) -> Option<(Option<String>
     } else {
         (Some(language.to_string()), code)
     })
+}
+
+fn parse_equation_marker(raw: &str) -> Option<(bool, String)> {
+    let raw = raw.trim();
+    let payload = raw
+        .strip_prefix(EQUATION_MARKER_PREFIX)?
+        .strip_suffix(EQUATION_MARKER_SUFFIX)?;
+    let (kind, encoded_tex) = payload.split_once(':')?;
+    let display = match kind {
+        "d" => true,
+        "i" => false,
+        _ => return None,
+    };
+
+    let tex = decode_hex(encoded_tex)?;
+    Some((display, tex))
+}
+
+fn decode_hex(value: &str) -> Option<String> {
+    if value.len() % 2 != 0 {
+        return None;
+    }
+
+    let mut bytes = Vec::with_capacity(value.len() / 2);
+    for chunk in value.as_bytes().chunks_exact(2) {
+        let piece = std::str::from_utf8(chunk).ok()?;
+        let byte = u8::from_str_radix(piece, 16).ok()?;
+        bytes.push(byte);
+    }
+
+    String::from_utf8(bytes).ok()
 }
 
 fn normalize_docx_target(target: &str) -> String {
@@ -2192,6 +3536,276 @@ mod tests {
 
         assert_eq!(language.as_deref(), Some("rust"));
         assert_eq!(code, "fn main() {\n    println!(\"hi\");\n}");
+    }
+
+    #[test]
+    fn writes_native_omml_and_applies_equation_style_mapping() {
+        let dir = tempdir().expect("tempdir should be created");
+        let output_docx = dir.path().join("out.docx");
+
+        let document = Document {
+            blocks: vec![
+                Block::Paragraph(vec![
+                    Inline::Text("Inline ".into()),
+                    Inline::Equation {
+                        tex: "x^2 + \\frac{1}{\\sqrt{y}}".into(),
+                        display: false,
+                    },
+                ]),
+                Block::Paragraph(vec![
+                    Inline::Text("Optimize ".into()),
+                    Inline::Equation {
+                        tex: "\\min_{\\beta} f(\\beta)".into(),
+                        display: false,
+                    },
+                ]),
+                Block::Paragraph(vec![Inline::Equation {
+                    tex: "\\left[\\begin{matrix} a & b \\\\ c & d \\end{matrix}\\right]".into(),
+                    display: true,
+                }]),
+                Block::Paragraph(vec![Inline::Equation {
+                    tex: "\\sum_{i=1}^{n} x_i".into(),
+                    display: true,
+                }]),
+            ],
+        };
+
+        let mut style_map = StyleMap::builtin();
+        style_map
+            .md_to_docx
+            .insert("equation_inline".to_string(), "EqInline".to_string());
+        style_map
+            .md_to_docx
+            .insert("equation_block".to_string(), "EqBlock".to_string());
+
+        let warnings = write_docx(
+            &document,
+            dir.path(),
+            &output_docx,
+            &DocxWriteOptions {
+                allow_remote_images: false,
+                style_map,
+                template: None,
+            },
+        )
+        .expect("DOCX write should succeed");
+        assert!(warnings.is_empty());
+
+        let mut archive = ZipArchive::new(
+            fs::File::open(&output_docx).expect("written docx should be readable as zip"),
+        )
+        .expect("written docx should be a valid zip");
+        let mut document_xml = String::new();
+        archive
+            .by_name("word/document.xml")
+            .expect("document.xml should exist")
+            .read_to_string(&mut document_xml)
+            .expect("document.xml should be readable");
+
+        assert!(
+            document_xml.contains("<m:oMath>"),
+            "equations should be emitted as OMML"
+        );
+        assert!(
+            document_xml.contains("<m:oMathPara>"),
+            "display equations should be emitted as OMML paragraph equations"
+        );
+        assert!(
+            document_xml.contains("<m:sSup>"),
+            "superscript equations should be emitted with structured OMML scripts"
+        );
+        assert!(
+            document_xml.contains("<m:f>"),
+            "fraction equations should be emitted with structured OMML fractions"
+        );
+        assert!(
+            document_xml.contains("<m:rad>"),
+            "sqrt equations should be emitted with structured OMML radicals"
+        );
+        assert!(
+            document_xml.contains("<m:d>") && document_xml.contains("<m:m>"),
+            "matrix equations with delimiters should be emitted as delimiter-wrapped OMML matrices"
+        );
+        assert!(
+            document_xml.contains("<m:nary>") && document_xml.contains("m:limLoc m:val=\"undOvr\""),
+            "display summations should emit n-ary OMML with under/over limits"
+        );
+        assert!(
+            document_xml.contains("<m:limLow>"),
+            "limit-like operators should emit limLow for improved operator typography"
+        );
+        assert!(
+            !document_xml.contains("<m:mPr><m:begChr"),
+            "matrix delimiters must not be placed in m:mPr"
+        );
+        assert!(
+            document_xml.contains("<w:pStyle w:val=\"EqBlock\"/>"),
+            "display equation paragraph should apply equation_block style"
+        );
+        assert!(
+            !document_xml.contains("<m:ctrlPr>"),
+            "OMML runs should avoid invalid control-property placement"
+        );
+    }
+
+    #[test]
+    fn renders_argmin_as_unified_limit_operator() {
+        let rendered = render_structured_omml("\\arg\\min_{\\beta} f(\\beta)", "EqInline")
+            .expect("structured OMML conversion should succeed")
+            .expect("expression should produce OMML body");
+
+        assert!(
+            rendered.contains("<m:t>argmin</m:t>"),
+            "arg + min should be collapsed into a single argmin operator token"
+        );
+        assert!(
+            rendered.contains("<m:limLow>"),
+            "argmin lower bounds should render as limLow"
+        );
+        assert!(
+            !rendered.contains("<m:t>arg</m:t>"),
+            "arg should not be emitted as a standalone token before min limits"
+        );
+    }
+
+    #[test]
+    fn reads_inline_omml_equation_as_inline_math() {
+        let dir = tempdir().expect("tempdir should be created");
+        let input_docx = dir.path().join("inline-omml.docx");
+        write_minimal_docx_with_document_xml(
+            &input_docx,
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">
+  <w:body>
+    <w:p>
+      <m:oMath>
+        <m:r><m:t>x</m:t></m:r>
+        <m:r><m:t>=</m:t></m:r>
+        <m:r><m:t>1</m:t></m:r>
+      </m:oMath>
+    </w:p>
+    <w:sectPr/>
+  </w:body>
+</w:document>"#,
+        )
+        .expect("fixture docx should be written");
+
+        let (document, warnings) = read_docx(
+            &input_docx,
+            &DocxReadOptions {
+                assets_dir: dir.path().join("assets"),
+                style_map: StyleMap::builtin(),
+                password: None,
+            },
+        )
+        .expect("DOCX read should succeed");
+
+        assert!(warnings.is_empty());
+        let Some(Block::Paragraph(inlines)) = document.blocks.first() else {
+            panic!("expected paragraph block");
+        };
+        assert_eq!(
+            inlines,
+            &vec![Inline::Equation {
+                tex: "x=1".to_string(),
+                display: false
+            }]
+        );
+    }
+
+    #[test]
+    fn reads_display_omml_equation_as_display_math() {
+        let dir = tempdir().expect("tempdir should be created");
+        let input_docx = dir.path().join("display-omml.docx");
+        write_minimal_docx_with_document_xml(
+            &input_docx,
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">
+  <w:body>
+    <w:p>
+      <m:oMathPara>
+        <m:oMath>
+          <m:r><m:t>E=mc^2</m:t></m:r>
+        </m:oMath>
+      </m:oMathPara>
+    </w:p>
+    <w:sectPr/>
+  </w:body>
+</w:document>"#,
+        )
+        .expect("fixture docx should be written");
+
+        let (document, warnings) = read_docx(
+            &input_docx,
+            &DocxReadOptions {
+                assets_dir: dir.path().join("assets"),
+                style_map: StyleMap::builtin(),
+                password: None,
+            },
+        )
+        .expect("DOCX read should succeed");
+
+        assert!(warnings.is_empty());
+        let Some(Block::Paragraph(inlines)) = document.blocks.first() else {
+            panic!("expected paragraph block");
+        };
+        assert_eq!(
+            inlines,
+            &vec![Inline::Equation {
+                tex: "E=mc^2".to_string(),
+                display: true
+            }]
+        );
+    }
+
+    #[test]
+    fn warns_and_flattens_unsupported_omml_structures() {
+        let dir = tempdir().expect("tempdir should be created");
+        let input_docx = dir.path().join("unsupported-omml.docx");
+        write_minimal_docx_with_document_xml(
+            &input_docx,
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">
+    <w:body>
+    <w:p>
+      <m:oMath>
+        <m:groupChr>
+          <m:e><m:r><m:t>x</m:t></m:r></m:e>
+        </m:groupChr>
+      </m:oMath>
+    </w:p>
+    <w:sectPr/>
+  </w:body>
+</w:document>"#,
+        )
+        .expect("fixture docx should be written");
+
+        let (document, warnings) = read_docx(
+            &input_docx,
+            &DocxReadOptions {
+                assets_dir: dir.path().join("assets"),
+                style_map: StyleMap::builtin(),
+                password: None,
+            },
+        )
+        .expect("DOCX read should succeed");
+
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.code == WarningCode::UnsupportedFeature),
+            "unsupported OMML should emit unsupported_feature warning"
+        );
+        let Some(Block::Paragraph(inlines)) = document.blocks.first() else {
+            panic!("expected paragraph block");
+        };
+        assert_eq!(
+            inlines,
+            &vec![Inline::Equation {
+                tex: "x".to_string(),
+                display: false
+            }]
+        );
     }
 
     #[test]
@@ -2797,6 +4411,15 @@ mod tests {
         let mut zip = ZipWriter::new(file);
         zip.start_file("word/not-styles.xml", SimpleFileOptions::default())?;
         zip.write_all(b"placeholder")?;
+        zip.finish()?;
+        Ok(())
+    }
+
+    fn write_minimal_docx_with_document_xml(path: &Path, document_xml: &str) -> Result<()> {
+        let file = fs::File::create(path)?;
+        let mut zip = ZipWriter::new(file);
+        zip.start_file("word/document.xml", SimpleFileOptions::default())?;
+        zip.write_all(document_xml.as_bytes())?;
         zip.finish()?;
         Ok(())
     }

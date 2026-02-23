@@ -40,6 +40,7 @@ Precedence:
 Use these canonical mapping tokens when an agent prepares a style map:
 
 - Markdown heading tokens: `h1`, `h2`, `h3`, `h4`, `h5`, `h6`
+- Equation tokens (for `md_to_docx`): `equation_inline`, `equation_block`
 - DOCX heading styles: `Heading1`, `Heading2`, `Heading3`, `Heading4`, `Heading5`, `Heading6`
 
 Default heading mapping:
@@ -96,6 +97,8 @@ md_to_docx:
   paragraph: Normal
   quote: Quote
   code: Code
+  equation_inline: EquationInline
+  equation_block: Equation
   list_bullet: ListBullet
   list_number: ListNumber
   table: Table
@@ -131,6 +134,8 @@ JSON style map:
     "paragraph": "Normal",
     "quote": "Quote",
     "code": "Code",
+    "equation_inline": "EquationInline",
+    "equation_block": "Equation",
     "list_bullet": "ListBullet",
     "list_number": "ListNumber",
     "table": "Table"

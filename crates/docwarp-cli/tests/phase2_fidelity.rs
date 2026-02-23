@@ -196,6 +196,98 @@ fn dotx_template_is_applied_and_invalid_template_falls_back() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn equations_roundtrip_md_docx_md_with_native_omml() -> Result<()> {
+    let temp = tempdir().context("tempdir should be created")?;
+    let input = temp.path().join("equations.md");
+    let output_docx = temp.path().join("equations.docx");
+    let output_md = temp.path().join("equations.roundtrip.md");
+
+    fs::write(&input, "Inline equation: $x^2 + y^2$\n\n$$\nE=mc^2\n$$\n")
+        .context("failed writing markdown with equations")?;
+
+    let md2docx = run_docwarp([
+        "md2docx",
+        input.to_string_lossy().as_ref(),
+        "--output",
+        output_docx.to_string_lossy().as_ref(),
+    ])?;
+    assert_command_status(
+        &md2docx,
+        Some(0),
+        "md2docx should succeed for equation input",
+    )?;
+
+    let docx2md = run_docwarp([
+        "docx2md",
+        output_docx.to_string_lossy().as_ref(),
+        "--output",
+        output_md.to_string_lossy().as_ref(),
+    ])?;
+    assert_command_status(
+        &docx2md,
+        Some(0),
+        "docx2md should succeed for equation output",
+    )?;
+
+    let rendered = fs::read_to_string(&output_md).context("failed reading roundtrip markdown")?;
+    assert!(
+        rendered.contains("Inline equation: $x^2 + y^2$"),
+        "expected inline equation in markdown output, got:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("$$\nE=mc^2\n$$"),
+        "expected canonical display equation block in markdown output, got:\n{rendered}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn strict_mode_returns_exit_code_2_for_unsupported_omml_equations() -> Result<()> {
+    let temp = tempdir().context("tempdir should be created")?;
+    let input_docx = temp.path().join("unsupported-omml.docx");
+    let output_md = temp.path().join("unsupported-omml.md");
+
+    write_docx_with_document_xml(
+        &input_docx,
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">
+    <w:body>
+    <w:p>
+      <m:oMath>
+        <m:groupChr>
+          <m:e><m:r><m:t>x</m:t></m:r></m:e>
+        </m:groupChr>
+      </m:oMath>
+    </w:p>
+    <w:sectPr/>
+  </w:body>
+</w:document>"#,
+    )?;
+
+    let run = run_docwarp([
+        "docx2md",
+        input_docx.to_string_lossy().as_ref(),
+        "--output",
+        output_md.to_string_lossy().as_ref(),
+        "--strict",
+    ])?;
+
+    assert_command_status(
+        &run,
+        Some(2),
+        "strict docx2md should return exit code 2 on unsupported equation warning",
+    )?;
+    assert!(
+        stdout_text(&run).contains("[unsupported_feature]"),
+        "expected unsupported_feature warning in strict output, got:\n{}",
+        stdout_text(&run)
+    );
+
+    Ok(())
+}
+
 fn run_docwarp<const N: usize>(args: [&str; N]) -> Result<Output> {
     Command::new(env!("CARGO_BIN_EXE_docwarp"))
         .args(args)
@@ -240,6 +332,15 @@ fn write_invalid_template_zip(path: &Path) -> Result<()> {
     let mut zip = ZipWriter::new(file);
     zip.start_file("word/not-styles.xml", SimpleFileOptions::default())?;
     zip.write_all(b"placeholder")?;
+    zip.finish()?;
+    Ok(())
+}
+
+fn write_docx_with_document_xml(path: &Path, document_xml: &str) -> Result<()> {
+    let file = fs::File::create(path)?;
+    let mut zip = ZipWriter::new(file);
+    zip.start_file("word/document.xml", SimpleFileOptions::default())?;
+    zip.write_all(document_xml.as_bytes())?;
     zip.finish()?;
     Ok(())
 }
