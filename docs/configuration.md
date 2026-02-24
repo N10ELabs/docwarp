@@ -2,6 +2,14 @@
 
 `docwarp` can load runtime defaults from `.docwarp.yml` and can override style mapping with YAML or JSON files.
 
+You can bootstrap both formats directly from a company template:
+
+```bash
+docwarp template-map ./styles/brand.dotx --output-dir ./styles
+```
+
+This writes `<template-stem>-style-map.yml` and `<template-stem>-style-map.json`, ready to use with `--style-map`.
+
 ## Config File
 
 When `--config` is omitted, `docwarp` auto-loads `.docwarp.yml` from the current working directory if it exists.
@@ -33,7 +41,7 @@ Precedence:
 
 - Built-in defaults
 - Config file values
-- CLI flags (`--style-map`, `--template`, `--assets-dir`, `--strict`, etc.)
+- CLI flags (`--style-map`, `--template`, `--assets-dir`, `--strict`, `--backup-dir`, etc.)
 
 ## Agent Mapping Reference
 
@@ -65,6 +73,8 @@ Agent guidance:
 
 - Preserve these tokens exactly (case-sensitive) when generating `md_to_docx` and `docx_to_md`.
 - If a custom style is needed (for example, `BrandHeading4`), map it to the nearest heading token in `docx_to_md` and keep a corresponding `md_to_docx` entry.
+- `md_to_docx` values can be a Word `styleId` or the style display name/alias from the template `styles.xml`; when a template is provided, `docwarp` resolves names/aliases to the canonical `styleId`.
+- `docx_to_md` keys can also be style display names/aliases; `docwarp` resolves paragraph `pStyle` IDs through `styles.xml` names/aliases during `docx2md`.
 - Keep heading mappings symmetric unless you intentionally want lossy round-trips.
 - If list items must visually match heading styles in DOCX, override `md_to_docx.list_number` and/or `md_to_docx.list_bullet` to the desired paragraph style while keeping Markdown list structure unchanged.
 - For canonical Markdown authoring rules used by CLI-based LLM/agent pipelines, see [`AGENTS.md`](../AGENTS.md). If this file conflicts with `AGENTS.md`, follow `AGENTS.md`.

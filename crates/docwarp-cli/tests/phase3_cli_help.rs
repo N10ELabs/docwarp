@@ -24,6 +24,10 @@ fn root_help_includes_examples() -> Result<()> {
         stdout.contains("docwarp docx2md ./contracts/master.docx --output ./contracts/master.md"),
         "expected docx2md example in root help, got:\n{stdout}"
     );
+    assert!(
+        stdout.contains("docwarp template-map ./styles/brand.dotx --output-dir ./styles"),
+        "expected template-map example in root help, got:\n{stdout}"
+    );
 
     Ok(())
 }
@@ -50,6 +54,14 @@ fn md2docx_help_includes_examples() -> Result<()> {
         stdout.contains("--glob \"**/*.md\""),
         "expected batch glob example in md2docx help, got:\n{stdout}"
     );
+    assert!(
+        stdout.contains("--backup-dir"),
+        "expected backup-dir option in md2docx help, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("--no-backup"),
+        "expected no-backup option in md2docx help, got:\n{stdout}"
+    );
 
     Ok(())
 }
@@ -75,6 +87,36 @@ fn docx2md_help_includes_examples() -> Result<()> {
     assert!(
         stdout.contains("--glob \"**/*.docx\""),
         "expected batch glob example in docx2md help, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("--backup-dir"),
+        "expected backup-dir option in docx2md help, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("--no-backup"),
+        "expected no-backup option in docx2md help, got:\n{stdout}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn template_map_help_includes_examples() -> Result<()> {
+    let output = run_docwarp(["template-map", "--help"])?;
+    assert_command_success(&output, "template-map --help should succeed")?;
+    let stdout = stdout_text(&output);
+
+    assert!(
+        stdout.contains("docwarp template-map ./brand.dotx"),
+        "expected base template-map example in help, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("--output-dir ./styles --name acme-brand"),
+        "expected output-dir/name example in help, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("Extract style maps from a DOCX/DOTX template"),
+        "expected template-map description in help, got:\n{stdout}"
     );
 
     Ok(())

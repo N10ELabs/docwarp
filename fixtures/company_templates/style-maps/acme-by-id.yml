@@ -1,0 +1,30 @@
+docx_to_md:
+  AcmeTitle: title
+  AcmeHeading1: h1
+  AcmeHeading2: h2
+  AcmeHeading3: h3
+  AcmeHeading4: h4
+  AcmeHeading5: h5
+  AcmeHeading6: h6
+  AcmeBody: paragraph
+  AcmeQuote: quote
+  AcmeCodeBlock: code
+  AcmeBulletList: list_bullet
+  AcmeNumberList: list_number
+  AcmeTable: table
+md_to_docx:
+  title: AcmeTitle
+  h1: AcmeHeading1
+  h2: AcmeHeading2
+  h3: AcmeHeading3
+  h4: AcmeHeading4
+  h5: AcmeHeading5
+  h6: AcmeHeading6
+  paragraph: AcmeBody
+  quote: AcmeQuote
+  code: AcmeCodeBlock
+  equation_inline: AcmeEquationInline
+  equation_block: AcmeEquationBlock
+  list_bullet: AcmeBulletList
+  list_number: AcmeNumberList
+  table: AcmeTable

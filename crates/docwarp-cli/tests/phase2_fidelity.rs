@@ -197,6 +197,94 @@ fn dotx_template_is_applied_and_invalid_template_falls_back() -> Result<()> {
 }
 
 #[test]
+fn style_map_can_target_template_style_names_and_aliases_end_to_end() -> Result<()> {
+    let temp = tempdir().context("tempdir should be created")?;
+    let input = temp.path().join("input.md");
+    let output_docx = temp.path().join("out.docx");
+    let output_md = temp.path().join("out.md");
+    let template = temp.path().join("brand.dotx");
+    let style_map = temp.path().join("style-map.yml");
+
+    fs::write(&input, "# Heading\n\nBody with `code`.\n")
+        .context("failed writing markdown input")?;
+
+    write_template_zip(
+        &template,
+        br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:style w:type="paragraph" w:styleId="Normal"><w:name w:val="Normal"/></w:style>
+  <w:style w:type="paragraph" w:styleId="CorpHeading1">
+    <w:name w:val="Corporate Heading 1"/>
+    <w:aliases w:val="Corp H1"/>
+  </w:style>
+  <w:style w:type="paragraph" w:styleId="CorpBody"><w:name w:val="Corporate Body"/></w:style>
+  <w:style w:type="character" w:styleId="CorpCodeChar"><w:name w:val="Corporate Code"/></w:style>
+  <w:style w:type="paragraph" w:styleId="CorpCodePara">
+    <w:name w:val="Corporate Code Block"/>
+    <w:link w:val="CorpCodeChar"/>
+  </w:style>
+</w:styles>"#,
+    )?;
+
+    fs::write(
+        &style_map,
+        r#"md_to_docx:
+  h1: Corp H1
+  paragraph: Corporate Body
+  code: Corporate Code Block
+docx_to_md:
+  Corporate Heading 1: h1
+  Corporate Body: paragraph
+"#,
+    )
+    .context("failed writing style-map fixture")?;
+
+    let md2docx = run_docwarp([
+        "md2docx",
+        input.to_string_lossy().as_ref(),
+        "--output",
+        output_docx.to_string_lossy().as_ref(),
+        "--template",
+        template.to_string_lossy().as_ref(),
+        "--style-map",
+        style_map.to_string_lossy().as_ref(),
+    ])?;
+    assert_command_status(&md2docx, Some(0), "md2docx should succeed")?;
+
+    let document_xml = read_document_xml(&output_docx)?;
+    assert!(
+        document_xml.contains("<w:pStyle w:val=\"CorpHeading1\"/>"),
+        "expected heading style name/alias to resolve to template styleId"
+    );
+    assert!(
+        document_xml.contains("<w:pStyle w:val=\"CorpBody\"/>"),
+        "expected paragraph style name to resolve to template styleId"
+    );
+    assert!(
+        document_xml.contains("<w:rStyle w:val=\"CorpCodeChar\"/>"),
+        "expected inline code to use linked template character style"
+    );
+
+    let docx2md = run_docwarp([
+        "docx2md",
+        output_docx.to_string_lossy().as_ref(),
+        "--output",
+        output_md.to_string_lossy().as_ref(),
+        "--style-map",
+        style_map.to_string_lossy().as_ref(),
+    ])?;
+    assert_command_status(&docx2md, Some(0), "docx2md should succeed")?;
+
+    let roundtrip = fs::read_to_string(&output_md).context("failed reading markdown output")?;
+    assert!(
+        roundtrip.starts_with("# Heading"),
+        "expected heading token mapping from template style name, got:\n{roundtrip}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn equations_roundtrip_md_docx_md_with_native_omml() -> Result<()> {
     let temp = tempdir().context("tempdir should be created")?;
     let input = temp.path().join("equations.md");
@@ -358,4 +446,19 @@ fn read_styles_xml(docx_path: &Path) -> Result<String> {
         .read_to_string(&mut styles)
         .context("failed reading word/styles.xml")?;
     Ok(styles)
+}
+
+fn read_document_xml(docx_path: &Path) -> Result<String> {
+    let mut archive = ZipArchive::new(
+        fs::File::open(docx_path)
+            .with_context(|| format!("failed opening output docx: {}", docx_path.display()))?,
+    )
+    .context("failed reading output docx as zip archive")?;
+    let mut document_xml = String::new();
+    archive
+        .by_name("word/document.xml")
+        .context("output docx missing word/document.xml")?
+        .read_to_string(&mut document_xml)
+        .context("failed reading word/document.xml")?;
+    Ok(document_xml)
 }

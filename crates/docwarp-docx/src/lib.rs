@@ -54,6 +54,144 @@ pub struct DocxReadOptions {
     pub password: Option<String>,
 }
 
+#[derive(Clone, Copy)]
+struct TokenStyleSpec {
+    token: &'static str,
+    fallback: &'static str,
+    expected: DocxStyleType,
+    hints: &'static [&'static str],
+}
+
+const TEMPLATE_STYLE_SPECS: [TokenStyleSpec; 15] = [
+    TokenStyleSpec {
+        token: "title",
+        fallback: "Title",
+        expected: DocxStyleType::Paragraph,
+        hints: &["Title", "Document Title", "DocumentTitle", "Cover Title"],
+    },
+    TokenStyleSpec {
+        token: "h1",
+        fallback: "Heading1",
+        expected: DocxStyleType::Paragraph,
+        hints: &["Heading1", "Heading 1", "H1", "Header1", "Header 1"],
+    },
+    TokenStyleSpec {
+        token: "h2",
+        fallback: "Heading2",
+        expected: DocxStyleType::Paragraph,
+        hints: &["Heading2", "Heading 2", "H2", "Header2", "Header 2"],
+    },
+    TokenStyleSpec {
+        token: "h3",
+        fallback: "Heading3",
+        expected: DocxStyleType::Paragraph,
+        hints: &["Heading3", "Heading 3", "H3", "Header3", "Header 3"],
+    },
+    TokenStyleSpec {
+        token: "h4",
+        fallback: "Heading4",
+        expected: DocxStyleType::Paragraph,
+        hints: &["Heading4", "Heading 4", "H4", "Header4", "Header 4"],
+    },
+    TokenStyleSpec {
+        token: "h5",
+        fallback: "Heading5",
+        expected: DocxStyleType::Paragraph,
+        hints: &["Heading5", "Heading 5", "H5", "Header5", "Header 5"],
+    },
+    TokenStyleSpec {
+        token: "h6",
+        fallback: "Heading6",
+        expected: DocxStyleType::Paragraph,
+        hints: &["Heading6", "Heading 6", "H6", "Header6", "Header 6"],
+    },
+    TokenStyleSpec {
+        token: "paragraph",
+        fallback: "Normal",
+        expected: DocxStyleType::Paragraph,
+        hints: &["Body Text", "BodyText", "Body", "Paragraph"],
+    },
+    TokenStyleSpec {
+        token: "quote",
+        fallback: "Quote",
+        expected: DocxStyleType::Paragraph,
+        hints: &[
+            "Quote",
+            "Block Quote",
+            "BlockQuote",
+            "Pull Quote",
+            "PullQuote",
+        ],
+    },
+    TokenStyleSpec {
+        token: "code",
+        fallback: "Code",
+        expected: DocxStyleType::Paragraph,
+        hints: &[
+            "Code",
+            "Code Block",
+            "CodeBlock",
+            "Source Code",
+            "Preformatted",
+        ],
+    },
+    TokenStyleSpec {
+        token: "equation_inline",
+        fallback: "EquationInline",
+        expected: DocxStyleType::Character,
+        hints: &[
+            "EquationInline",
+            "Equation Inline",
+            "InlineEquation",
+            "Inline Equation",
+            "Math Inline",
+        ],
+    },
+    TokenStyleSpec {
+        token: "equation_block",
+        fallback: "Equation",
+        expected: DocxStyleType::Paragraph,
+        hints: &[
+            "Equation",
+            "Display Equation",
+            "DisplayEquation",
+            "Equation Block",
+            "Math Block",
+        ],
+    },
+    TokenStyleSpec {
+        token: "list_bullet",
+        fallback: "ListBullet",
+        expected: DocxStyleType::Paragraph,
+        hints: &[
+            "ListBullet",
+            "List Bullet",
+            "Bullet List",
+            "BulletList",
+            "Bulleted List",
+        ],
+    },
+    TokenStyleSpec {
+        token: "list_number",
+        fallback: "ListNumber",
+        expected: DocxStyleType::Paragraph,
+        hints: &[
+            "ListNumber",
+            "List Number",
+            "Numbered List",
+            "NumberedList",
+            "Ordered List",
+            "OrderedList",
+        ],
+    },
+    TokenStyleSpec {
+        token: "table",
+        fallback: "Table",
+        expected: DocxStyleType::Table,
+        hints: &["Table", "Table Grid", "TableGrid"],
+    },
+];
+
 #[derive(Debug, Clone)]
 struct Relationship {
     id: String,
@@ -175,8 +313,79 @@ struct RunStyle {
 
 #[derive(Debug, Clone, Copy)]
 struct ListNumbering {
-    ordered: bool,
+    num_id: u32,
     level: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DocxStyleType {
+    Paragraph,
+    Character,
+    Table,
+}
+
+#[derive(Debug, Clone, Default)]
+struct StyleDefinition {
+    style_id: String,
+    style_type: Option<DocxStyleType>,
+    name: Option<String>,
+    aliases: Vec<String>,
+    linked_style_id: Option<String>,
+    list_num_id: Option<u32>,
+    list_level: Option<u8>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct StyleCatalog {
+    by_id: BTreeMap<String, StyleDefinition>,
+    by_lookup_key: BTreeMap<String, Vec<String>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ListStyleNumbering {
+    num_id: u32,
+    base_level: u8,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedDocxStyles {
+    title: String,
+    heading_1: String,
+    heading_2: String,
+    heading_3: String,
+    heading_4: String,
+    heading_5: String,
+    heading_6: String,
+    paragraph: String,
+    quote: String,
+    code: String,
+    list_bullet: String,
+    list_number: String,
+    table: String,
+    equation_inline: String,
+    equation_block: String,
+    code_inline_run_style: Option<String>,
+}
+
+impl ResolvedDocxStyles {
+    fn heading_style(&self, level: u8) -> &str {
+        match level {
+            1 => &self.heading_1,
+            2 => &self.heading_2,
+            3 => &self.heading_3,
+            4 => &self.heading_4,
+            5 => &self.heading_5,
+            _ => &self.heading_6,
+        }
+    }
+
+    fn list_style(&self, ordered: bool) -> &str {
+        if ordered {
+            &self.list_number
+        } else {
+            &self.list_bullet
+        }
+    }
 }
 
 #[derive(Default)]
@@ -243,10 +452,20 @@ pub fn write_docx(
     ensure_styles_relationship(&mut state);
     ensure_numbering_relationship(&mut state);
 
+    let styles_xml = resolve_styles_xml(template.as_ref());
+    let style_catalog = parse_style_catalog(&styles_xml).unwrap_or_default();
+    let resolved_styles = resolve_docx_styles(
+        &options.style_map,
+        Some(&style_catalog),
+        options.template.is_some(),
+    );
+
     let document_xml = build_document_xml(
         document,
         markdown_base_dir,
         options,
+        &resolved_styles,
+        &style_catalog,
         template
             .as_ref()
             .and_then(|package| package.section_properties_xml.as_deref()),
@@ -254,7 +473,6 @@ pub fn write_docx(
         &mut warnings,
     )?;
 
-    let styles_xml = resolve_styles_xml(template.as_ref());
     let numbering_xml = resolve_numbering_xml(template.as_ref());
     let template_content_types = template
         .as_ref()
@@ -404,6 +622,8 @@ fn build_document_xml(
     document: &Document,
     markdown_base_dir: &Path,
     options: &DocxWriteOptions,
+    resolved_styles: &ResolvedDocxStyles,
+    style_catalog: &StyleCatalog,
     section_properties_xml: Option<&str>,
     state: &mut DocxBuildState,
     warnings: &mut Vec<ConversionWarning>,
@@ -415,12 +635,13 @@ fn build_document_xml(
             Block::Title(content) => {
                 body.push_str(&render_paragraph(
                     content,
-                    &options.style_map.docx_style_for("title"),
+                    &resolved_styles.title,
                     if block_index > 0 { Some(240) } else { None },
                     Some(240),
                     None,
                     None,
                     None,
+                    resolved_styles.code_inline_run_style.as_deref(),
                     markdown_base_dir,
                     options,
                     state,
@@ -428,23 +649,15 @@ fn build_document_xml(
                 )?);
             }
             Block::Heading { level, content } => {
-                let token = match *level {
-                    1 => "h1",
-                    2 => "h2",
-                    3 => "h3",
-                    4 => "h4",
-                    5 => "h5",
-                    _ => "h6",
-                };
-
                 body.push_str(&render_paragraph(
                     content,
-                    &options.style_map.docx_style_for(token),
+                    resolved_styles.heading_style(*level),
                     if block_index > 0 { Some(240) } else { None },
                     Some(240),
                     None,
                     None,
                     None,
+                    resolved_styles.code_inline_run_style.as_deref(),
                     markdown_base_dir,
                     options,
                     state,
@@ -455,8 +668,8 @@ fn build_document_xml(
                 if let Some(tex) = single_display_equation(content) {
                     body.push_str(&render_equation_paragraph(
                         tex,
-                        &options.style_map.docx_style_for("equation_block"),
-                        &options.style_map.docx_style_for("equation_inline"),
+                        &resolved_styles.equation_block,
+                        &resolved_styles.equation_inline,
                         None,
                         Some(240),
                         warnings,
@@ -464,12 +677,13 @@ fn build_document_xml(
                 } else {
                     body.push_str(&render_paragraph(
                         content,
-                        &options.style_map.docx_style_for("paragraph"),
+                        &resolved_styles.paragraph,
                         None,
                         Some(240),
                         None,
                         None,
                         None,
+                        resolved_styles.code_inline_run_style.as_deref(),
                         markdown_base_dir,
                         options,
                         state,
@@ -480,12 +694,13 @@ fn build_document_xml(
             Block::BlockQuote(content) => {
                 body.push_str(&render_paragraph(
                     content,
-                    &options.style_map.docx_style_for("quote"),
+                    &resolved_styles.quote,
                     None,
                     None,
                     None,
                     None,
                     None,
+                    resolved_styles.code_inline_run_style.as_deref(),
                     markdown_base_dir,
                     options,
                     state,
@@ -506,12 +721,13 @@ fn build_document_xml(
 
                 body.push_str(&render_paragraph(
                     &code_inlines,
-                    &options.style_map.docx_style_for("code"),
+                    &resolved_styles.code,
                     None,
                     None,
                     None,
                     None,
                     language.as_deref(),
+                    resolved_styles.code_inline_run_style.as_deref(),
                     markdown_base_dir,
                     options,
                     state,
@@ -526,28 +742,51 @@ fn build_document_xml(
             } => {
                 for (index, item) in items.iter().enumerate() {
                     let is_ordered = *item_ordered.get(index).unwrap_or(ordered);
-                    let style = if is_ordered {
-                        options.style_map.docx_style_for("list_number")
-                    } else {
-                        options.style_map.docx_style_for("list_bullet")
-                    };
+                    let style = resolved_styles.list_style(is_ordered).to_string();
                     let level = *levels.get(index).unwrap_or(&0);
                     let clamped_level = level.min(LIST_MAX_LEVEL);
-                    let level_twips = u32::from(clamped_level);
-                    let indent_left = LIST_BASE_INDENT_TWIPS
-                        .saturating_add(level_twips.saturating_mul(LIST_INDENT_STEP_TWIPS));
+                    let list_style_numbering = style_catalog.list_numbering_for_style_id(&style);
+
+                    let (indent_left, list_numbering) =
+                        if let Some(style_numbering) = list_style_numbering {
+                            let effective_level = style_numbering
+                                .base_level
+                                .saturating_add(clamped_level)
+                                .min(LIST_MAX_LEVEL);
+                            (
+                                None,
+                                Some(ListNumbering {
+                                    num_id: style_numbering.num_id,
+                                    level: effective_level,
+                                }),
+                            )
+                        } else {
+                            let level_twips = u32::from(clamped_level);
+                            let indent_left = LIST_BASE_INDENT_TWIPS
+                                .saturating_add(level_twips.saturating_mul(LIST_INDENT_STEP_TWIPS));
+                            let num_id = if is_ordered {
+                                ORDERED_LIST_NUM_ID
+                            } else {
+                                BULLET_LIST_NUM_ID
+                            };
+                            (
+                                Some(indent_left),
+                                Some(ListNumbering {
+                                    num_id,
+                                    level: clamped_level,
+                                }),
+                            )
+                        };
 
                     body.push_str(&render_paragraph(
                         item,
                         &style,
                         None,
                         None,
-                        Some(indent_left),
-                        Some(ListNumbering {
-                            ordered: is_ordered,
-                            level: clamped_level,
-                        }),
+                        indent_left,
+                        list_numbering,
                         None,
+                        resolved_styles.code_inline_run_style.as_deref(),
                         markdown_base_dir,
                         options,
                         state,
@@ -559,7 +798,8 @@ fn build_document_xml(
                 body.push_str(&render_table(
                     headers,
                     rows,
-                    &options.style_map.docx_style_for("table"),
+                    &resolved_styles.table,
+                    resolved_styles.code_inline_run_style.as_deref(),
                     markdown_base_dir,
                     options,
                     state,
@@ -574,12 +814,13 @@ fn build_document_xml(
                 };
                 body.push_str(&render_paragraph(
                     &[inline],
-                    &options.style_map.docx_style_for("paragraph"),
+                    &resolved_styles.paragraph,
                     None,
                     Some(240),
                     None,
                     None,
                     None,
+                    resolved_styles.code_inline_run_style.as_deref(),
                     markdown_base_dir,
                     options,
                     state,
@@ -589,12 +830,13 @@ fn build_document_xml(
             Block::ThematicBreak => {
                 body.push_str(&render_paragraph(
                     &[Inline::Text("---".to_string())],
-                    &options.style_map.docx_style_for("paragraph"),
+                    &resolved_styles.paragraph,
                     None,
                     None,
                     None,
                     None,
                     None,
+                    resolved_styles.code_inline_run_style.as_deref(),
                     markdown_base_dir,
                     options,
                     state,
@@ -624,6 +866,7 @@ fn render_table(
     headers: &[Vec<Inline>],
     rows: &[Vec<Vec<Inline>>],
     style: &str,
+    code_run_style_id: Option<&str>,
     markdown_base_dir: &Path,
     options: &DocxWriteOptions,
     state: &mut DocxBuildState,
@@ -653,6 +896,7 @@ fn render_table(
             out.push_str("<w:tc><w:p>");
             out.push_str(&render_inlines(
                 cell,
+                code_run_style_id,
                 markdown_base_dir,
                 options,
                 state,
@@ -669,6 +913,7 @@ fn render_table(
             out.push_str("<w:tc><w:p>");
             out.push_str(&render_inlines(
                 cell,
+                code_run_style_id,
                 markdown_base_dir,
                 options,
                 state,
@@ -691,6 +936,7 @@ fn render_paragraph(
     indent_left_twips: Option<u32>,
     list_numbering: Option<ListNumbering>,
     code_language: Option<&str>,
+    code_run_style_id: Option<&str>,
     markdown_base_dir: &Path,
     options: &DocxWriteOptions,
     state: &mut DocxBuildState,
@@ -716,14 +962,9 @@ fn render_paragraph(
         ));
     }
     if let Some(list) = list_numbering {
-        let num_id = if list.ordered {
-            ORDERED_LIST_NUM_ID
-        } else {
-            BULLET_LIST_NUM_ID
-        };
         out.push_str(&format!(
             "<w:numPr><w:ilvl w:val=\"{}\"/><w:numId w:val=\"{}\"/></w:numPr>",
-            list.level, num_id
+            list.level, list.num_id
         ));
     }
     out.push_str("</w:pPr>");
@@ -732,6 +973,7 @@ fn render_paragraph(
     }
     out.push_str(&render_inlines(
         inlines,
+        code_run_style_id,
         markdown_base_dir,
         options,
         state,
@@ -784,6 +1026,7 @@ fn render_equation_paragraph(
 
 fn render_inlines(
     inlines: &[Inline],
+    code_run_style_id: Option<&str>,
     markdown_base_dir: &Path,
     options: &DocxWriteOptions,
     state: &mut DocxBuildState,
@@ -794,6 +1037,7 @@ fn render_inlines(
         render_inline(
             inline,
             RunStyle::default(),
+            code_run_style_id,
             markdown_base_dir,
             options,
             state,
@@ -807,6 +1051,7 @@ fn render_inlines(
 fn render_inline(
     inline: &Inline,
     mut style: RunStyle,
+    code_run_style_id: Option<&str>,
     markdown_base_dir: &Path,
     options: &DocxWriteOptions,
     state: &mut DocxBuildState,
@@ -814,11 +1059,11 @@ fn render_inline(
     out: &mut String,
 ) -> Result<()> {
     match inline {
-        Inline::Text(text) => out.push_str(&render_text_run(text, &style)),
+        Inline::Text(text) => out.push_str(&render_text_run(text, &style, code_run_style_id)),
         Inline::LineBreak => out.push_str("<w:r><w:br/></w:r>"),
         Inline::Code(code) => {
             style.code = true;
-            out.push_str(&render_text_run(code, &style));
+            out.push_str(&render_text_run(code, &style, code_run_style_id));
         }
         Inline::Emphasis(children) => {
             style.italic = true;
@@ -830,6 +1075,7 @@ fn render_inline(
                         italic: style.italic,
                         code: style.code,
                     },
+                    code_run_style_id,
                     markdown_base_dir,
                     options,
                     state,
@@ -848,6 +1094,7 @@ fn render_inline(
                         italic: style.italic,
                         code: style.code,
                     },
+                    code_run_style_id,
                     markdown_base_dir,
                     options,
                     state,
@@ -867,6 +1114,7 @@ fn render_inline(
                         italic: style.italic,
                         code: style.code,
                     },
+                    code_run_style_id,
                     markdown_base_dir,
                     options,
                     state,
@@ -908,7 +1156,7 @@ fn render_inline(
     Ok(())
 }
 
-fn render_text_run(text: &str, style: &RunStyle) -> String {
+fn render_text_run(text: &str, style: &RunStyle, code_run_style_id: Option<&str>) -> String {
     let mut run = String::new();
     run.push_str("<w:r>");
     if style.bold || style.italic || style.code {
@@ -920,10 +1168,14 @@ fn render_text_run(text: &str, style: &RunStyle) -> String {
             run.push_str("<w:i/>");
         }
         if style.code {
-            run.push_str("<w:rStyle w:val=\"Code\"/>");
-            run.push_str(
-                "<w:rFonts w:ascii=\"Consolas\" w:hAnsi=\"Consolas\"/>\n<w:sz w:val=\"20\"/>",
-            );
+            if let Some(style_id) = code_run_style_id {
+                run.push_str(&format!("<w:rStyle w:val=\"{}\"/>", escape_xml(style_id)));
+            } else {
+                run.push_str("<w:rStyle w:val=\"Code\"/>");
+                run.push_str(
+                    "<w:rFonts w:ascii=\"Consolas\" w:hAnsi=\"Consolas\"/>\n<w:sz w:val=\"20\"/>",
+                );
+            }
         }
         run.push_str("</w:rPr>");
     }
@@ -1969,6 +2221,26 @@ fn load_template_package(
     Ok(None)
 }
 
+pub fn extract_style_map_from_template(template_path: &Path) -> Result<StyleMap> {
+    let template = read_template_package(template_path).with_context(|| {
+        format!(
+            "failed reading DOCX template package: {}",
+            template_path.display()
+        )
+    })?;
+    let styles_xml = template
+        .entries
+        .get("word/styles.xml")
+        .ok_or_else(|| anyhow!("template is missing word/styles.xml"))?;
+    let catalog = parse_style_catalog(styles_xml).with_context(|| {
+        format!(
+            "failed parsing word/styles.xml: {}",
+            template_path.display()
+        )
+    })?;
+    Ok(build_style_map_from_catalog(&catalog))
+}
+
 fn read_template_package(template_path: &Path) -> Result<TemplatePackage> {
     let file = fs::File::open(template_path).context("failed opening template")?;
     let mut archive = ZipArchive::new(file).context("failed reading template as zip")?;
@@ -2018,6 +2290,674 @@ fn resolve_numbering_xml(template: Option<&TemplatePackage>) -> Vec<u8> {
     template
         .and_then(|package| package.entries.get("word/numbering.xml").cloned())
         .unwrap_or_else(default_numbering_xml)
+}
+
+impl StyleCatalog {
+    fn insert_style(&mut self, style: StyleDefinition) {
+        let style_id = style.style_id.clone();
+        self.insert_lookup_key(&style_id, &style_id);
+
+        if let Some(name) = &style.name {
+            self.insert_lookup_key(name, &style_id);
+        }
+        for alias in &style.aliases {
+            self.insert_lookup_key(alias, &style_id);
+        }
+
+        self.by_id.insert(style_id, style);
+    }
+
+    fn insert_lookup_key(&mut self, raw: &str, style_id: &str) {
+        let key = normalize_style_lookup_key(raw);
+        if key.is_empty() {
+            return;
+        }
+
+        let entry = self.by_lookup_key.entry(key).or_default();
+        if !entry.iter().any(|existing| existing == style_id) {
+            entry.push(style_id.to_string());
+        }
+    }
+
+    fn style_by_id_case_insensitive(&self, style_id: &str) -> Option<&StyleDefinition> {
+        self.by_id.get(style_id).or_else(|| {
+            self.by_id
+                .iter()
+                .find(|(id, _)| id.eq_ignore_ascii_case(style_id))
+                .map(|(_, style)| style)
+        })
+    }
+
+    fn resolve_style_id(&self, reference: &str, expected: Option<DocxStyleType>) -> Option<String> {
+        let trimmed = reference.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        if let Some(style) = self.style_by_id_case_insensitive(trimmed) {
+            if expected.is_none() || style.style_type == expected {
+                return Some(style.style_id.clone());
+            }
+        }
+
+        let key = normalize_style_lookup_key(trimmed);
+        let candidates = self.by_lookup_key.get(&key)?;
+        if let Some(expected) = expected {
+            for style_id in candidates {
+                if let Some(style) = self.by_id.get(style_id) {
+                    if style.style_type == Some(expected) {
+                        return Some(style.style_id.clone());
+                    }
+                }
+            }
+        }
+
+        candidates.first().cloned()
+    }
+
+    fn list_numbering_for_style_id(&self, style_id: &str) -> Option<ListStyleNumbering> {
+        let style = self.style_by_id_case_insensitive(style_id)?;
+        Some(ListStyleNumbering {
+            num_id: style.list_num_id?,
+            base_level: style.list_level.unwrap_or(0),
+        })
+    }
+
+    fn style_references_for_style_id(&self, style_id: &str) -> Vec<String> {
+        let mut refs = Vec::new();
+        if let Some(style) = self.style_by_id_case_insensitive(style_id) {
+            refs.push(style.style_id.clone());
+            if let Some(name) = &style.name {
+                refs.push(name.clone());
+            }
+            for alias in &style.aliases {
+                refs.push(alias.clone());
+            }
+        } else {
+            refs.push(style_id.to_string());
+        }
+        refs
+    }
+}
+
+fn parse_style_catalog(styles_xml: &[u8]) -> Result<StyleCatalog> {
+    let xml = String::from_utf8(styles_xml.to_vec()).context("styles.xml is not UTF-8")?;
+    let mut reader = Reader::from_str(&xml);
+    reader.config_mut().trim_text(true);
+
+    let mut catalog = StyleCatalog::default();
+    let mut current: Option<StyleDefinition> = None;
+    let mut buf = Vec::new();
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(start)) => {
+                if local_name(start.name().as_ref()) == b"style" {
+                    let Some(style_id) = attr_value(&start, b"styleId") else {
+                        buf.clear();
+                        continue;
+                    };
+                    let style_type =
+                        attr_value(&start, b"type").and_then(|value| parse_docx_style_type(&value));
+                    current = Some(StyleDefinition {
+                        style_id,
+                        style_type,
+                        ..StyleDefinition::default()
+                    });
+                } else if let Some(style) = current.as_mut() {
+                    parse_style_child(start, style);
+                }
+            }
+            Ok(Event::Empty(start)) => {
+                if local_name(start.name().as_ref()) == b"style" {
+                    let Some(style_id) = attr_value(&start, b"styleId") else {
+                        buf.clear();
+                        continue;
+                    };
+                    let style_type =
+                        attr_value(&start, b"type").and_then(|value| parse_docx_style_type(&value));
+                    catalog.insert_style(StyleDefinition {
+                        style_id,
+                        style_type,
+                        ..StyleDefinition::default()
+                    });
+                } else if let Some(style) = current.as_mut() {
+                    parse_style_child(start, style);
+                }
+            }
+            Ok(Event::End(end)) => {
+                if local_name(end.name().as_ref()) == b"style" {
+                    if let Some(style) = current.take() {
+                        catalog.insert_style(style);
+                    }
+                }
+            }
+            Ok(Event::Eof) => break,
+            Ok(_) => {}
+            Err(err) => return Err(anyhow!("failed parsing styles.xml: {err}")),
+        }
+
+        buf.clear();
+    }
+
+    Ok(catalog)
+}
+
+fn parse_style_child(start: BytesStart<'_>, style: &mut StyleDefinition) {
+    match local_name(start.name().as_ref()) {
+        b"name" => {
+            if let Some(value) = attr_value(&start, b"val") {
+                let trimmed = value.trim();
+                if !trimmed.is_empty() {
+                    style.name = Some(trimmed.to_string());
+                }
+            }
+        }
+        b"aliases" => {
+            if let Some(value) = attr_value(&start, b"val") {
+                for alias in value.split(',') {
+                    let trimmed = alias.trim();
+                    if !trimmed.is_empty() {
+                        style.aliases.push(trimmed.to_string());
+                    }
+                }
+            }
+        }
+        b"link" => {
+            if let Some(value) = attr_value(&start, b"val") {
+                let trimmed = value.trim();
+                if !trimmed.is_empty() {
+                    style.linked_style_id = Some(trimmed.to_string());
+                }
+            }
+        }
+        b"numId" => {
+            if let Some(value) = attr_value(&start, b"val") {
+                style.list_num_id = value.trim().parse::<u32>().ok();
+            }
+        }
+        b"ilvl" => {
+            if let Some(value) = attr_value(&start, b"val") {
+                style.list_level = value
+                    .trim()
+                    .parse::<u8>()
+                    .ok()
+                    .map(|level| level.min(LIST_MAX_LEVEL));
+            }
+        }
+        _ => {}
+    }
+}
+
+fn parse_docx_style_type(value: &str) -> Option<DocxStyleType> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "paragraph" => Some(DocxStyleType::Paragraph),
+        "character" => Some(DocxStyleType::Character),
+        "table" => Some(DocxStyleType::Table),
+        _ => None,
+    }
+}
+
+fn build_style_map_from_catalog(catalog: &StyleCatalog) -> StyleMap {
+    let mut style_map = StyleMap::builtin();
+    let mut resolved = Vec::new();
+
+    for spec in TEMPLATE_STYLE_SPECS {
+        let style_id = resolve_template_style_for_token(catalog, spec);
+        style_map
+            .md_to_docx
+            .insert(spec.token.to_string(), style_id.clone());
+        resolved.push((spec.token, style_id));
+    }
+
+    for (token, style_id) in &resolved {
+        if !is_docx_to_md_token(token) {
+            continue;
+        }
+        for style_ref in catalog.style_references_for_style_id(style_id) {
+            style_map.docx_to_md.insert(style_ref, (*token).to_string());
+        }
+    }
+
+    for style in catalog.by_id.values() {
+        let fallback_token = infer_docx_to_md_token(style);
+        for style_ref in style_references(style) {
+            style_map
+                .docx_to_md
+                .entry(style_ref)
+                .or_insert_with(|| fallback_token.to_string());
+        }
+    }
+
+    style_map
+}
+
+fn resolve_template_style_for_token(catalog: &StyleCatalog, spec: TokenStyleSpec) -> String {
+    for hint in spec.hints {
+        if let Some(style_id) = catalog.resolve_style_id(hint, Some(spec.expected)) {
+            return style_id;
+        }
+    }
+
+    let mut best_match: Option<(i32, String)> = None;
+    for style in catalog.by_id.values() {
+        let score = score_style_for_token(style, spec.token, spec.expected);
+        if score <= 0 {
+            continue;
+        }
+
+        match &best_match {
+            Some((best_score, _)) if *best_score >= score => {}
+            _ => best_match = Some((score, style.style_id.clone())),
+        }
+    }
+
+    if let Some((_, style_id)) = best_match {
+        return style_id;
+    }
+
+    if let Some(style_id) = catalog.resolve_style_id(spec.fallback, Some(spec.expected)) {
+        return style_id;
+    }
+
+    if let Some(style_id) = first_style_id_for_type(catalog, spec.expected) {
+        return style_id;
+    }
+
+    spec.fallback.to_string()
+}
+
+fn first_style_id_for_type(catalog: &StyleCatalog, expected: DocxStyleType) -> Option<String> {
+    catalog
+        .by_id
+        .values()
+        .find(|style| style.style_type == Some(expected))
+        .map(|style| style.style_id.clone())
+}
+
+fn style_matches_expected_type(style: &StyleDefinition, expected: DocxStyleType) -> bool {
+    style.style_type.is_none() || style.style_type == Some(expected)
+}
+
+fn style_references(style: &StyleDefinition) -> Vec<String> {
+    let mut refs = Vec::new();
+    refs.push(style.style_id.clone());
+    if let Some(name) = &style.name {
+        refs.push(name.clone());
+    }
+    for alias in &style.aliases {
+        refs.push(alias.clone());
+    }
+    refs
+}
+
+fn compact_style_key(raw: &str) -> String {
+    raw.chars()
+        .filter(|value| value.is_ascii_alphanumeric())
+        .map(|value| value.to_ascii_lowercase())
+        .collect()
+}
+
+fn style_keys(style: &StyleDefinition) -> Vec<String> {
+    style_references(style)
+        .into_iter()
+        .map(|value| compact_style_key(&value))
+        .filter(|value| !value.is_empty())
+        .collect()
+}
+
+fn contains_style_fragment(keys: &[String], fragment: &str) -> bool {
+    let needle = compact_style_key(fragment);
+    if needle.is_empty() {
+        return false;
+    }
+    keys.iter().any(|key| key.contains(&needle))
+}
+
+fn score_style_for_token(style: &StyleDefinition, token: &str, expected: DocxStyleType) -> i32 {
+    if !style_matches_expected_type(style, expected) {
+        return -1000;
+    }
+
+    let keys = style_keys(style);
+    let mut score = 0;
+
+    match token {
+        "title" => {
+            if contains_style_fragment(&keys, "title") {
+                score += 220;
+            }
+            if contains_style_fragment(&keys, "documenttitle")
+                || contains_style_fragment(&keys, "covertitle")
+            {
+                score += 120;
+            }
+            if contains_style_fragment(&keys, "toc")
+                || contains_style_fragment(&keys, "tableofcontents")
+            {
+                score -= 160;
+            }
+        }
+        "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
+            let level = token
+                .strip_prefix('h')
+                .and_then(|value| value.parse::<u8>().ok())
+                .unwrap_or(1);
+
+            if contains_style_fragment(&keys, "heading") {
+                score += 60;
+            }
+            if contains_style_fragment(&keys, &format!("heading{level}")) {
+                score += 240;
+            }
+            if contains_style_fragment(&keys, &format!("header{level}")) {
+                score += 160;
+            }
+            if contains_style_fragment(&keys, &format!("h{level}")) {
+                score += 120;
+            }
+            if contains_style_fragment(&keys, &format!("level{level}")) {
+                score += 80;
+            }
+
+            for other in 1..=6 {
+                if other == level {
+                    continue;
+                }
+                if contains_style_fragment(&keys, &format!("heading{other}")) {
+                    score -= 80;
+                }
+                if contains_style_fragment(&keys, &format!("h{other}")) {
+                    score -= 50;
+                }
+            }
+        }
+        "paragraph" => {
+            if contains_style_fragment(&keys, "normal") {
+                score += 100;
+            }
+            if contains_style_fragment(&keys, "bodytext")
+                || contains_style_fragment(&keys, "body")
+                || contains_style_fragment(&keys, "paragraph")
+            {
+                score += 180;
+            }
+            if contains_style_fragment(&keys, "heading")
+                || contains_style_fragment(&keys, "quote")
+                || contains_style_fragment(&keys, "code")
+                || contains_style_fragment(&keys, "list")
+                || contains_style_fragment(&keys, "equation")
+            {
+                score -= 120;
+            }
+        }
+        "quote" => {
+            if contains_style_fragment(&keys, "quote")
+                || contains_style_fragment(&keys, "blockquote")
+                || contains_style_fragment(&keys, "pullquote")
+            {
+                score += 230;
+            }
+        }
+        "code" => {
+            if contains_style_fragment(&keys, "code")
+                || contains_style_fragment(&keys, "source")
+                || contains_style_fragment(&keys, "preformatted")
+                || contains_style_fragment(&keys, "verbatim")
+            {
+                score += 230;
+            }
+        }
+        "list_bullet" => {
+            if style.list_num_id.is_some() {
+                score += 40;
+            }
+            if contains_style_fragment(&keys, "list") {
+                score += 70;
+            }
+            if contains_style_fragment(&keys, "bullet")
+                || contains_style_fragment(&keys, "bulleted")
+                || contains_style_fragment(&keys, "unordered")
+            {
+                score += 220;
+            }
+            if contains_style_fragment(&keys, "number")
+                || contains_style_fragment(&keys, "ordered")
+                || contains_style_fragment(&keys, "decimal")
+            {
+                score -= 120;
+            }
+        }
+        "list_number" => {
+            if style.list_num_id.is_some() {
+                score += 40;
+            }
+            if contains_style_fragment(&keys, "list") {
+                score += 70;
+            }
+            if contains_style_fragment(&keys, "number")
+                || contains_style_fragment(&keys, "ordered")
+                || contains_style_fragment(&keys, "decimal")
+            {
+                score += 220;
+            }
+            if contains_style_fragment(&keys, "bullet")
+                || contains_style_fragment(&keys, "bulleted")
+                || contains_style_fragment(&keys, "unordered")
+            {
+                score -= 120;
+            }
+        }
+        "table" => {
+            if contains_style_fragment(&keys, "table")
+                || contains_style_fragment(&keys, "tablegrid")
+            {
+                score += 260;
+            }
+        }
+        "equation_inline" => {
+            if contains_style_fragment(&keys, "equationinline")
+                || contains_style_fragment(&keys, "inlineequation")
+                || contains_style_fragment(&keys, "mathinline")
+            {
+                score += 260;
+            }
+            if contains_style_fragment(&keys, "equation") || contains_style_fragment(&keys, "math")
+            {
+                score += 140;
+            }
+        }
+        "equation_block" => {
+            if contains_style_fragment(&keys, "displayequation")
+                || contains_style_fragment(&keys, "equationblock")
+                || contains_style_fragment(&keys, "mathblock")
+            {
+                score += 260;
+            }
+            if contains_style_fragment(&keys, "equation") || contains_style_fragment(&keys, "math")
+            {
+                score += 140;
+            }
+            if style.style_type == Some(DocxStyleType::Character) {
+                score -= 200;
+            }
+        }
+        _ => {}
+    }
+
+    score
+}
+
+fn is_docx_to_md_token(token: &str) -> bool {
+    matches!(
+        token,
+        "title"
+            | "h1"
+            | "h2"
+            | "h3"
+            | "h4"
+            | "h5"
+            | "h6"
+            | "paragraph"
+            | "quote"
+            | "code"
+            | "list_bullet"
+            | "list_number"
+            | "table"
+    )
+}
+
+fn expected_type_for_token(token: &str) -> DocxStyleType {
+    match token {
+        "table" => DocxStyleType::Table,
+        _ => DocxStyleType::Paragraph,
+    }
+}
+
+fn infer_docx_to_md_token(style: &StyleDefinition) -> &'static str {
+    let candidates = [
+        "title",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "quote",
+        "code",
+        "list_bullet",
+        "list_number",
+        "table",
+        "paragraph",
+    ];
+
+    let mut best: Option<(&'static str, i32)> = None;
+    for token in candidates {
+        let score = score_style_for_token(style, token, expected_type_for_token(token));
+        match best {
+            Some((_, best_score)) if best_score >= score => {}
+            _ => best = Some((token, score)),
+        }
+    }
+
+    if let Some((token, score)) = best {
+        if score > 0 {
+            return token;
+        }
+    }
+
+    match style.style_type {
+        Some(DocxStyleType::Table) => "table",
+        _ => "paragraph",
+    }
+}
+
+fn normalize_style_lookup_key(raw: &str) -> String {
+    raw.trim().to_ascii_lowercase()
+}
+
+fn resolve_docx_styles(
+    style_map: &StyleMap,
+    style_catalog: Option<&StyleCatalog>,
+    resolve_names: bool,
+) -> ResolvedDocxStyles {
+    let resolve = |token: &str, expected: Option<DocxStyleType>| {
+        let configured = style_map.docx_style_for(token);
+        if !resolve_names {
+            return configured;
+        }
+
+        style_catalog
+            .and_then(|catalog| catalog.resolve_style_id(&configured, expected))
+            .unwrap_or(configured)
+    };
+
+    let code = resolve("code", Some(DocxStyleType::Paragraph));
+
+    ResolvedDocxStyles {
+        title: resolve("title", Some(DocxStyleType::Paragraph)),
+        heading_1: resolve("h1", Some(DocxStyleType::Paragraph)),
+        heading_2: resolve("h2", Some(DocxStyleType::Paragraph)),
+        heading_3: resolve("h3", Some(DocxStyleType::Paragraph)),
+        heading_4: resolve("h4", Some(DocxStyleType::Paragraph)),
+        heading_5: resolve("h5", Some(DocxStyleType::Paragraph)),
+        heading_6: resolve("h6", Some(DocxStyleType::Paragraph)),
+        paragraph: resolve("paragraph", Some(DocxStyleType::Paragraph)),
+        quote: resolve("quote", Some(DocxStyleType::Paragraph)),
+        list_bullet: resolve("list_bullet", Some(DocxStyleType::Paragraph)),
+        list_number: resolve("list_number", Some(DocxStyleType::Paragraph)),
+        table: resolve("table", Some(DocxStyleType::Table)),
+        equation_inline: resolve("equation_inline", Some(DocxStyleType::Character)),
+        equation_block: resolve("equation_block", Some(DocxStyleType::Paragraph)),
+        code_inline_run_style: resolve_inline_code_style_id(style_catalog, resolve_names, &code),
+        code,
+    }
+}
+
+fn resolve_inline_code_style_id(
+    style_catalog: Option<&StyleCatalog>,
+    resolve_names: bool,
+    code_paragraph_style_id: &str,
+) -> Option<String> {
+    if !resolve_names {
+        return None;
+    }
+    let Some(catalog) = style_catalog else {
+        return None;
+    };
+
+    let code_style = catalog.style_by_id_case_insensitive(code_paragraph_style_id)?;
+    if code_style.style_type == Some(DocxStyleType::Character) {
+        return Some(code_style.style_id.clone());
+    }
+
+    if let Some(linked_style_id) = &code_style.linked_style_id {
+        if let Some(linked_style) = catalog.style_by_id_case_insensitive(linked_style_id) {
+            if linked_style.style_type == Some(DocxStyleType::Character) {
+                return Some(linked_style.style_id.clone());
+            }
+        }
+    }
+
+    catalog.resolve_style_id("Code", Some(DocxStyleType::Character))
+}
+
+fn resolve_md_token_for_docx_style(
+    style_id: &str,
+    style_map: &StyleMap,
+    style_catalog: Option<&StyleCatalog>,
+) -> String {
+    if let Some(token) = style_map.docx_to_md.get(style_id) {
+        return token.clone();
+    }
+    if let Some(token) = lookup_style_map_token_case_insensitive(&style_map.docx_to_md, style_id) {
+        return token;
+    }
+
+    if let Some(catalog) = style_catalog {
+        for style_ref in catalog.style_references_for_style_id(style_id) {
+            if let Some(token) = style_map.docx_to_md.get(&style_ref) {
+                return token.clone();
+            }
+            if let Some(token) =
+                lookup_style_map_token_case_insensitive(&style_map.docx_to_md, &style_ref)
+            {
+                return token;
+            }
+        }
+    }
+
+    "paragraph".to_string()
+}
+
+fn lookup_style_map_token_case_insensitive(
+    docx_to_md: &BTreeMap<String, String>,
+    style_name: &str,
+) -> Option<String> {
+    docx_to_md
+        .iter()
+        .find(|(candidate, _)| candidate.eq_ignore_ascii_case(style_name))
+        .map(|(_, token)| token.clone())
 }
 
 fn ensure_styles_relationship(state: &mut DocxBuildState) {
@@ -2390,6 +3330,7 @@ pub fn read_docx(
         .context("failed reading word/document.xml")?;
 
     let relationships = read_relationships(&mut archive)?;
+    let style_catalog = read_style_catalog(&mut archive, &mut warnings);
     let image_targets = extract_image_assets(
         &mut archive,
         &relationships,
@@ -2729,6 +3670,7 @@ pub fn read_docx(
                                     classify_paragraph(
                                         paragraph,
                                         &options.style_map,
+                                        style_catalog.as_ref(),
                                         &mut pending_list,
                                         &mut blocks,
                                     );
@@ -3311,6 +4253,44 @@ fn read_relationships<R: Read + std::io::Seek>(
     Ok(relationships)
 }
 
+fn read_style_catalog<R: Read + std::io::Seek>(
+    archive: &mut ZipArchive<R>,
+    warnings: &mut Vec<ConversionWarning>,
+) -> Option<StyleCatalog> {
+    let mut styles_bytes = Vec::new();
+    let mut styles_entry = match archive.by_name("word/styles.xml") {
+        Ok(entry) => entry,
+        Err(_) => return None,
+    };
+
+    if let Err(err) = styles_entry.read_to_end(&mut styles_bytes) {
+        warnings.push(
+            ConversionWarning::new(
+                WarningCode::UnsupportedFeature,
+                format!("Failed reading word/styles.xml for style mapping: {err}"),
+            )
+            .with_location("word/styles.xml"),
+        );
+        return None;
+    }
+
+    match parse_style_catalog(&styles_bytes) {
+        Ok(catalog) => Some(catalog),
+        Err(err) => {
+            warnings.push(
+                ConversionWarning::new(
+                    WarningCode::UnsupportedFeature,
+                    format!(
+                        "Failed parsing word/styles.xml for style-name mapping: {err}. Falling back to styleId-only mapping."
+                    ),
+                )
+                .with_location("word/styles.xml"),
+            );
+            None
+        }
+    }
+}
+
 fn extract_image_assets<R: Read + std::io::Seek>(
     archive: &mut ZipArchive<R>,
     relationships: &BTreeMap<String, String>,
@@ -3367,6 +4347,7 @@ fn extract_image_assets<R: Read + std::io::Seek>(
 fn classify_paragraph(
     paragraph: ParseParagraph,
     style_map: &StyleMap,
+    style_catalog: Option<&StyleCatalog>,
     pending_list: &mut Option<PendingList>,
     blocks: &mut Vec<Block>,
 ) {
@@ -3376,7 +4357,7 @@ fn classify_paragraph(
         inlines,
     } = paragraph;
     let style = style.unwrap_or_else(|| "Normal".to_string());
-    let token = style_map.md_token_for(&style);
+    let token = resolve_md_token_for_docx_style(&style, style_map, style_catalog);
 
     match token.as_str() {
         "list_bullet" | "list_number" => {
@@ -4828,6 +5809,255 @@ mod tests {
     }
 
     #[test]
+    fn resolves_template_style_names_aliases_and_linked_code_style() {
+        let dir = tempdir().expect("tempdir should be created");
+        let template_path = dir.path().join("brand.dotx");
+        let output_docx = dir.path().join("out.docx");
+
+        let mut entries = BTreeMap::new();
+        entries.insert(
+            "word/styles.xml".to_string(),
+            br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:style w:type="paragraph" w:styleId="Normal"><w:name w:val="Normal"/></w:style>
+  <w:style w:type="paragraph" w:styleId="CorpHeading1">
+    <w:name w:val="Corporate Heading 1"/>
+    <w:aliases w:val="Corp H1,Corp Heading"/>
+  </w:style>
+  <w:style w:type="paragraph" w:styleId="CorpBody"><w:name w:val="Corporate Body"/></w:style>
+  <w:style w:type="table" w:styleId="CorpTable"><w:name w:val="Corporate Table"/></w:style>
+  <w:style w:type="character" w:styleId="CorpCodeChar"><w:name w:val="Corporate Code"/></w:style>
+  <w:style w:type="paragraph" w:styleId="CorpCodePara">
+    <w:name w:val="Corporate Code Block"/>
+    <w:link w:val="CorpCodeChar"/>
+  </w:style>
+</w:styles>"#
+                .to_vec(),
+        );
+        write_template_entries_zip(&template_path, &entries).expect("template should be written");
+
+        let mut style_map = StyleMap::builtin();
+        style_map
+            .md_to_docx
+            .insert("h1".to_string(), "Corp H1".to_string());
+        style_map
+            .md_to_docx
+            .insert("paragraph".to_string(), "Corporate Body".to_string());
+        style_map
+            .md_to_docx
+            .insert("table".to_string(), "Corporate Table".to_string());
+        style_map
+            .md_to_docx
+            .insert("code".to_string(), "Corporate Code Block".to_string());
+
+        let document = Document {
+            blocks: vec![
+                Block::Heading {
+                    level: 1,
+                    content: vec![Inline::Text("Title".into())],
+                },
+                Block::Paragraph(vec![
+                    Inline::Text("Inline ".into()),
+                    Inline::Code("code".into()),
+                ]),
+                Block::Table {
+                    headers: vec![vec![Inline::Text("H".into())]],
+                    rows: vec![vec![vec![Inline::Text("R".into())]]],
+                },
+            ],
+        };
+
+        let warnings = write_docx(
+            &document,
+            dir.path(),
+            &output_docx,
+            &DocxWriteOptions {
+                allow_remote_images: false,
+                style_map,
+                template: Some(template_path),
+            },
+        )
+        .expect("DOCX write should succeed");
+        assert!(
+            warnings.is_empty(),
+            "expected no warnings for valid template usage"
+        );
+
+        let mut archive = ZipArchive::new(
+            fs::File::open(&output_docx).expect("written docx should be readable as zip"),
+        )
+        .expect("written docx should be valid zip");
+        let mut document_xml = String::new();
+        archive
+            .by_name("word/document.xml")
+            .expect("document.xml should exist")
+            .read_to_string(&mut document_xml)
+            .expect("document.xml should be readable");
+
+        assert!(
+            document_xml.contains("<w:pStyle w:val=\"CorpHeading1\"/>"),
+            "heading style name/alias should resolve to template styleId"
+        );
+        assert!(
+            document_xml.contains("<w:pStyle w:val=\"CorpBody\"/>"),
+            "paragraph style name should resolve to template styleId"
+        );
+        assert!(
+            document_xml.contains("<w:tblStyle w:val=\"CorpTable\"/>"),
+            "table style name should resolve to template styleId"
+        );
+        assert!(
+            document_xml.contains("<w:rStyle w:val=\"CorpCodeChar\"/>"),
+            "inline code should use linked character style from template"
+        );
+    }
+
+    #[test]
+    fn uses_template_list_style_numbering_when_style_map_targets_company_list_style() {
+        let dir = tempdir().expect("tempdir should be created");
+        let template_path = dir.path().join("lists.dotx");
+        let output_docx = dir.path().join("out.docx");
+
+        let mut entries = BTreeMap::new();
+        entries.insert(
+            "word/styles.xml".to_string(),
+            br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:style w:type="paragraph" w:styleId="Normal"><w:name w:val="Normal"/></w:style>
+  <w:style w:type="paragraph" w:styleId="CorpBulletList">
+    <w:name w:val="Corporate Bullet List"/>
+    <w:pPr>
+      <w:numPr>
+        <w:ilvl w:val="2"/>
+        <w:numId w:val="77"/>
+      </w:numPr>
+    </w:pPr>
+  </w:style>
+</w:styles>"#
+                .to_vec(),
+        );
+        entries.insert(
+            "word/numbering.xml".to_string(),
+            br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:abstractNum w:abstractNumId="70">
+    <w:lvl w:ilvl="0"><w:numFmt w:val="bullet"/><w:lvlText w:val="*"/></w:lvl>
+  </w:abstractNum>
+  <w:num w:numId="77"><w:abstractNumId w:val="70"/></w:num>
+</w:numbering>"#
+                .to_vec(),
+        );
+        write_template_entries_zip(&template_path, &entries).expect("template should be written");
+
+        let mut style_map = StyleMap::builtin();
+        style_map.md_to_docx.insert(
+            "list_bullet".to_string(),
+            "Corporate Bullet List".to_string(),
+        );
+
+        let document = Document {
+            blocks: vec![Block::List {
+                ordered: false,
+                items: vec![
+                    vec![Inline::Text("parent".into())],
+                    vec![Inline::Text("child".into())],
+                ],
+                levels: vec![0, 1],
+                item_ordered: vec![false, false],
+            }],
+        };
+
+        let warnings = write_docx(
+            &document,
+            dir.path(),
+            &output_docx,
+            &DocxWriteOptions {
+                allow_remote_images: false,
+                style_map,
+                template: Some(template_path),
+            },
+        )
+        .expect("DOCX write should succeed");
+        assert!(
+            warnings.is_empty(),
+            "expected no warnings for list style mapping"
+        );
+
+        let mut archive = ZipArchive::new(
+            fs::File::open(&output_docx).expect("written docx should be readable as zip"),
+        )
+        .expect("written docx should be valid zip");
+        let mut document_xml = String::new();
+        archive
+            .by_name("word/document.xml")
+            .expect("document.xml should exist")
+            .read_to_string(&mut document_xml)
+            .expect("document.xml should be readable");
+
+        assert!(
+            document_xml.contains("<w:pStyle w:val=\"CorpBulletList\"/>"),
+            "list style name should resolve to company list styleId"
+        );
+        assert!(
+            document_xml.contains("<w:numId w:val=\"77\"/>"),
+            "list numbering should use numId from template style definition"
+        );
+        assert!(
+            document_xml.contains("<w:ilvl w:val=\"2\"/>")
+                && document_xml.contains("<w:ilvl w:val=\"3\"/>"),
+            "nested markdown levels should offset from template list level"
+        );
+    }
+
+    #[test]
+    fn docx_to_md_maps_style_id_by_template_style_alias() {
+        let dir = tempdir().expect("tempdir should be created");
+        let input_docx = dir.path().join("alias-style.docx");
+
+        let styles_xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:style w:type="paragraph" w:styleId="CorpHeading1">
+    <w:name w:val="Corporate Heading 1"/>
+    <w:aliases w:val="Corp H1,Company H1"/>
+  </w:style>
+</w:styles>"#;
+        let document_xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p>
+      <w:pPr><w:pStyle w:val="CorpHeading1"/></w:pPr>
+      <w:r><w:t>Heading From Alias</w:t></w:r>
+    </w:p>
+    <w:sectPr/>
+  </w:body>
+</w:document>"#;
+        write_minimal_docx_with_styles_and_document_xml(&input_docx, styles_xml, document_xml)
+            .expect("fixture docx should be written");
+
+        let mut style_map = StyleMap::builtin();
+        style_map
+            .docx_to_md
+            .insert("Company H1".to_string(), "h1".to_string());
+
+        let (document, warnings) = read_docx(
+            &input_docx,
+            &DocxReadOptions {
+                assets_dir: dir.path().join("assets"),
+                style_map,
+                password: None,
+            },
+        )
+        .expect("DOCX read should succeed");
+
+        assert!(warnings.is_empty());
+        let Some(Block::Heading { level, content }) = document.blocks.first() else {
+            panic!("expected first block to be heading");
+        };
+        assert_eq!(*level, 1);
+        assert_eq!(content, &vec![Inline::Text("Heading From Alias".into())]);
+    }
+
+    #[test]
     fn writes_document_relationship_for_styles_xml() {
         let dir = tempdir().expect("tempdir should be created");
         let output_docx = dir.path().join("out.docx");
@@ -5124,6 +6354,115 @@ mod tests {
         );
     }
 
+    #[test]
+    fn extracts_style_map_from_company_template_with_custom_names() {
+        let dir = tempdir().expect("tempdir should be created");
+        let template = dir.path().join("company.dotx");
+        let styles_xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:style w:type="paragraph" w:styleId="BrandTitle"><w:name w:val="Acme Title"/></w:style>
+  <w:style w:type="paragraph" w:styleId="BrandH1"><w:name w:val="Acme Heading 1"/></w:style>
+  <w:style w:type="paragraph" w:styleId="BrandH2"><w:name w:val="Acme Heading 2"/></w:style>
+  <w:style w:type="paragraph" w:styleId="BrandBody"><w:name w:val="Acme Body Text"/></w:style>
+  <w:style w:type="paragraph" w:styleId="BrandQuote"><w:name w:val="Acme Block Quote"/></w:style>
+  <w:style w:type="paragraph" w:styleId="BrandCode"><w:name w:val="Acme Code Block"/></w:style>
+  <w:style w:type="character" w:styleId="BrandEqInline"><w:name w:val="Acme Equation Inline"/></w:style>
+  <w:style w:type="paragraph" w:styleId="BrandEqBlock"><w:name w:val="Acme Equation Block"/></w:style>
+  <w:style w:type="paragraph" w:styleId="BrandBullets"><w:name w:val="Acme Bullet List"/></w:style>
+  <w:style w:type="paragraph" w:styleId="BrandNumbers"><w:name w:val="Acme Numbered List"/></w:style>
+  <w:style w:type="table" w:styleId="BrandTable"><w:name w:val="Acme Table"/></w:style>
+</w:styles>"#;
+
+        write_template_zip(&template, styles_xml.as_bytes()).expect("template should be written");
+
+        let style_map =
+            extract_style_map_from_template(&template).expect("style map extraction should work");
+
+        assert_eq!(
+            style_map.md_to_docx.get("title"),
+            Some(&"BrandTitle".to_string())
+        );
+        assert_eq!(style_map.md_to_docx.get("h1"), Some(&"BrandH1".to_string()));
+        assert_eq!(style_map.md_to_docx.get("h2"), Some(&"BrandH2".to_string()));
+        assert_eq!(
+            style_map.md_to_docx.get("paragraph"),
+            Some(&"BrandBody".to_string())
+        );
+        assert_eq!(
+            style_map.md_to_docx.get("quote"),
+            Some(&"BrandQuote".to_string())
+        );
+        assert_eq!(
+            style_map.md_to_docx.get("code"),
+            Some(&"BrandCode".to_string())
+        );
+        assert_eq!(
+            style_map.md_to_docx.get("equation_inline"),
+            Some(&"BrandEqInline".to_string())
+        );
+        assert_eq!(
+            style_map.md_to_docx.get("equation_block"),
+            Some(&"BrandEqBlock".to_string())
+        );
+        assert_eq!(
+            style_map.md_to_docx.get("list_bullet"),
+            Some(&"BrandBullets".to_string())
+        );
+        assert_eq!(
+            style_map.md_to_docx.get("list_number"),
+            Some(&"BrandNumbers".to_string())
+        );
+        assert_eq!(
+            style_map.md_to_docx.get("table"),
+            Some(&"BrandTable".to_string())
+        );
+
+        assert_eq!(
+            style_map.docx_to_md.get("BrandH1"),
+            Some(&"h1".to_string()),
+            "mapped style id should resolve for docx2md"
+        );
+        assert_eq!(
+            style_map.docx_to_md.get("Acme Heading 1"),
+            Some(&"h1".to_string()),
+            "mapped display name should resolve for docx2md"
+        );
+        assert_eq!(
+            style_map.docx_to_md.get("BrandTable"),
+            Some(&"table".to_string()),
+            "table style should map to table token"
+        );
+    }
+
+    #[test]
+    fn extracts_style_map_includes_fallback_docx_to_md_entries_for_all_styles() {
+        let dir = tempdir().expect("tempdir should be created");
+        let template = dir.path().join("template.dotx");
+        let styles_xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:style w:type="paragraph" w:styleId="LegalBody"><w:name w:val="Legal Body"/></w:style>
+  <w:style w:type="paragraph" w:styleId="LegalClause"><w:name w:val="Clause Paragraph"/></w:style>
+  <w:style w:type="table" w:styleId="LegalMatrix"><w:name w:val="Matrix Table"/></w:style>
+</w:styles>"#;
+        write_template_zip(&template, styles_xml.as_bytes()).expect("template should be written");
+
+        let style_map =
+            extract_style_map_from_template(&template).expect("style map extraction should work");
+
+        assert!(
+            style_map.docx_to_md.contains_key("LegalBody"),
+            "style id should be present in reverse map"
+        );
+        assert!(
+            style_map.docx_to_md.contains_key("Clause Paragraph"),
+            "style display name should be present in reverse map"
+        );
+        assert_eq!(
+            style_map.docx_to_md.get("LegalMatrix"),
+            Some(&"table".to_string())
+        );
+    }
+
     fn write_template_zip(path: &Path, styles_xml: &[u8]) -> Result<()> {
         let file = fs::File::create(path)?;
         let mut zip = ZipWriter::new(file);
@@ -5156,6 +6495,21 @@ mod tests {
     fn write_minimal_docx_with_document_xml(path: &Path, document_xml: &str) -> Result<()> {
         let file = fs::File::create(path)?;
         let mut zip = ZipWriter::new(file);
+        zip.start_file("word/document.xml", SimpleFileOptions::default())?;
+        zip.write_all(document_xml.as_bytes())?;
+        zip.finish()?;
+        Ok(())
+    }
+
+    fn write_minimal_docx_with_styles_and_document_xml(
+        path: &Path,
+        styles_xml: &str,
+        document_xml: &str,
+    ) -> Result<()> {
+        let file = fs::File::create(path)?;
+        let mut zip = ZipWriter::new(file);
+        zip.start_file("word/styles.xml", SimpleFileOptions::default())?;
+        zip.write_all(styles_xml.as_bytes())?;
         zip.start_file("word/document.xml", SimpleFileOptions::default())?;
         zip.write_all(document_xml.as_bytes())?;
         zip.finish()?;

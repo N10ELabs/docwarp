@@ -1,5 +1,6 @@
 use std::fs;
 use std::io::Write;
+use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
 use anyhow::{Context, Result, bail};
@@ -99,6 +100,71 @@ fn subcommand_output_includes_header_mode() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn guided_options_apply_backup_settings() -> Result<()> {
+    let temp = tempdir().context("tempdir should be created")?;
+    let input = temp.path().join("note.md");
+    let output = temp.path().join("note.docx");
+    let backup_dir = temp.path().join("guided-backups");
+
+    fs::write(&input, "# Guided\n\nv1\n").context("failed writing markdown v1")?;
+    let first = run_guided_with_stdin(&format!("{}\n", input.display()))?;
+    assert_command_status(&first, Some(0), "initial guided run should succeed")?;
+    assert!(output.is_file(), "expected output at {}", output.display());
+
+    fs::write(&input, "# Guided\n\nv2\n").context("failed writing markdown v2")?;
+    let configure_and_run = format!(
+        "/\n5\n1\n6\n{}\nq\n{}\n",
+        backup_dir.display(),
+        input.display()
+    );
+    let second = run_guided_with_stdin(&configure_and_run)?;
+    assert_command_status(
+        &second,
+        Some(0),
+        "guided overwrite with custom backup config",
+    )?;
+    let backups_after_second = collect_backup_files(&backup_dir, "note.docx")?;
+    assert_eq!(
+        backups_after_second.len(),
+        1,
+        "expected exactly one backup after first overwrite"
+    );
+
+    fs::write(&input, "# Guided\n\nv3\n").context("failed writing markdown v3")?;
+    let third = run_guided_with_stdin(&configure_and_run)?;
+    assert_command_status(
+        &third,
+        Some(0),
+        "guided overwrite with retention should succeed",
+    )?;
+    let backups_after_third = collect_backup_files(&backup_dir, "note.docx")?;
+    assert_eq!(
+        backups_after_third.len(),
+        1,
+        "expected backup max count to retain only one backup file"
+    );
+
+    fs::write(&input, "# Guided\n\nv4\n").context("failed writing markdown v4")?;
+    let disable_and_run = format!("/\n4\nq\n{}\n", input.display());
+    let fourth = run_guided_with_stdin(&disable_and_run)?;
+    assert_command_status(&fourth, Some(0), "guided overwrite with backups disabled")?;
+    assert!(
+        !stdout_text(&fourth).contains("backup created ✓"),
+        "did not expect backup creation line when guided backups are disabled:\n{}",
+        stdout_text(&fourth)
+    );
+
+    let backups_after_fourth = collect_backup_files(&backup_dir, "note.docx")?;
+    assert_eq!(
+        backups_after_fourth.len(),
+        1,
+        "expected backup count to remain unchanged when backups are disabled"
+    );
+
+    Ok(())
+}
+
 fn assert_startup_header(stdout: &str) {
     assert!(
         stdout.contains("╭─ ◉ docwarp v") || stdout.contains("+-- o docwarp v"),
@@ -173,4 +239,40 @@ fn stdout_text(output: &Output) -> String {
 
 fn stderr_text(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
+fn collect_backup_files(backup_dir: &Path, output_file_name: &str) -> Result<Vec<String>> {
+    if !backup_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let output_path = Path::new(output_file_name);
+    let stem = output_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or(output_file_name);
+    let extension = output_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .map(|value| format!(".{value}"))
+        .unwrap_or_default();
+    let prefix = format!("{stem}--");
+
+    let mut matches = Vec::new();
+    for entry in fs::read_dir(backup_dir)
+        .with_context(|| format!("failed reading backup directory {}", backup_dir.display()))?
+    {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let file_name = entry.file_name().to_string_lossy().to_string();
+        if file_name.starts_with(&prefix) && file_name.ends_with(&extension) {
+            matches.push(file_name);
+        }
+    }
+
+    matches.sort();
+    Ok(matches)
 }

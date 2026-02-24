@@ -1,0 +1,66 @@
+docx_to_md:
+  ACME HEADING ONE: h1
+  Acme Body: paragraph
+  Acme Bullet Alias: list_bullet
+  Acme Bullet List: list_bullet
+  Acme Code Block: code
+  Acme Code Inline: paragraph
+  Acme Equation Block: paragraph
+  Acme Equation Inline: paragraph
+  Acme H1 Alias: h1
+  Acme Heading 1: h1
+  Acme Heading 2: h2
+  Acme Heading 3: h3
+  Acme Heading 4: h4
+  Acme Heading 5: h5
+  Acme Heading 6: h6
+  Acme Number Alias: list_number
+  Acme Number List: list_number
+  Acme Quote: quote
+  Acme Table: table
+  Acme Title: title
+  AcmeBody: paragraph
+  AcmeBulletList: list_bullet
+  AcmeCodeBlock: code
+  AcmeCodeInline: paragraph
+  AcmeEquationBlock: paragraph
+  AcmeEquationInline: paragraph
+  AcmeHeading1: h1
+  AcmeHeading2: h2
+  AcmeHeading3: h3
+  AcmeHeading4: h4
+  AcmeHeading5: h5
+  AcmeHeading6: h6
+  AcmeNumberList: list_number
+  AcmeQuote: quote
+  AcmeTable: table
+  AcmeTitle: title
+  Code: code
+  Heading1: h1
+  Heading2: h2
+  Heading3: h3
+  Heading4: h4
+  Heading5: h5
+  Heading6: h6
+  ListBullet: list_bullet
+  ListNumber: list_number
+  Normal: paragraph
+  Quote: quote
+  Table: table
+  Title: title
+md_to_docx:
+  code: AcmeCodeBlock
+  equation_block: AcmeEquationBlock
+  equation_inline: AcmeEquationInline
+  h1: AcmeHeading1
+  h2: AcmeHeading2
+  h3: AcmeHeading3
+  h4: AcmeHeading4
+  h5: AcmeHeading5
+  h6: AcmeHeading6
+  list_bullet: AcmeBulletList
+  list_number: AcmeNumberList
+  paragraph: AcmeBody
+  quote: AcmeQuote
+  table: AcmeTable
+  title: AcmeTitle

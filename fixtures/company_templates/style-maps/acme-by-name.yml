@@ -1,0 +1,30 @@
+docx_to_md:
+  Acme Title: title
+  Acme Heading 1: h1
+  Acme Heading 2: h2
+  Acme Heading 3: h3
+  Acme Heading 4: h4
+  Acme Heading 5: h5
+  Acme Heading 6: h6
+  Acme Body: paragraph
+  Acme Quote: quote
+  Acme Code Block: code
+  Acme Bullet List: list_bullet
+  Acme Number List: list_number
+  Acme Table: table
+md_to_docx:
+  title: Acme Title
+  h1: Acme H1 Alias
+  h2: Acme Heading 2
+  h3: Acme Heading 3
+  h4: Acme Heading 4
+  h5: Acme Heading 5
+  h6: Acme Heading 6
+  paragraph: Acme Body
+  quote: Acme Quote
+  code: Acme Code Block
+  equation_inline: Acme Equation Inline
+  equation_block: Acme Equation Block
+  list_bullet: Acme Bullet Alias
+  list_number: Acme Number Alias
+  table: Acme Table

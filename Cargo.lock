@@ -246,6 +246,7 @@ dependencies = [
  "glob",
  "rpassword",
  "serde_json",
+ "serde_yaml",
  "tempfile",
  "walkdir",
  "zip",

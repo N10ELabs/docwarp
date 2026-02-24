@@ -179,7 +179,10 @@ fn validate_style_map(style_map: &StyleMap, path: &Path) -> Result<()> {
 
         if token.trim().is_empty() {
             let entry = format_map_entry("docx_to_md", style_name);
-            bail!("empty markdown token at `{entry}`; provide one of: {}", format_allowed_tokens(&DOCX_TO_MD_ALLOWED_TOKENS));
+            bail!(
+                "empty markdown token at `{entry}`; provide one of: {}",
+                format_allowed_tokens(&DOCX_TO_MD_ALLOWED_TOKENS)
+            );
         }
 
         ensure_allowed_token(

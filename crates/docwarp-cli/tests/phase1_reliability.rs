@@ -3,6 +3,8 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::thread;
+use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use docwarp_core::{Block, Document, Inline, StyleMap, WarningCode};
@@ -295,6 +297,218 @@ fn docx2md_rejects_output_equal_to_input_path() -> Result<()> {
 }
 
 #[test]
+fn md2docx_overwrite_creates_backup_by_default() -> Result<()> {
+    let temp = tempdir().context("tempdir should be created")?;
+    let input = temp.path().join("input.md");
+    let output = temp.path().join("out.docx");
+
+    fs::write(&input, "# Title\n\nv1\n").context("failed writing markdown v1")?;
+    let first = run_docwarp([
+        "md2docx",
+        input.to_string_lossy().as_ref(),
+        "--output",
+        output.to_string_lossy().as_ref(),
+    ])?;
+    assert_command_status(&first, Some(0), "initial md2docx run should succeed")?;
+    let original_output = fs::read(&output).context("failed reading original output DOCX")?;
+
+    fs::write(&input, "# Title\n\nv2\n").context("failed writing markdown v2")?;
+    let second = run_docwarp([
+        "md2docx",
+        input.to_string_lossy().as_ref(),
+        "--output",
+        output.to_string_lossy().as_ref(),
+    ])?;
+    assert_command_status(&second, Some(0), "overwrite md2docx run should succeed")?;
+    assert!(
+        stdout_text(&second).contains("backup created ✓"),
+        "expected backup creation log line, got:\n{}",
+        stdout_text(&second)
+    );
+
+    let backup_dir = temp.path().join("docwarp_backups");
+    let backups = collect_backup_files(&backup_dir, "out.docx")?;
+    assert_eq!(
+        backups.len(),
+        1,
+        "expected one backup file after first overwrite, found {} in {}",
+        backups.len(),
+        backup_dir.display()
+    );
+
+    let backup_bytes = fs::read(&backups[0]).context("failed reading backup file")?;
+    assert_eq!(
+        backups[0].extension().and_then(OsStr::to_str),
+        Some("docx"),
+        "backup should keep native DOCX extension"
+    );
+    assert_eq!(
+        backup_bytes, original_output,
+        "backup file should preserve bytes from pre-overwrite output"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn docx2md_overwrite_creates_backup_by_default() -> Result<()> {
+    let temp = tempdir().context("tempdir should be created")?;
+    let input = temp.path().join("input.docx");
+    let output = temp.path().join("out.md");
+    let doc = Document {
+        blocks: vec![Block::Paragraph(vec![Inline::Text("hello".into())])],
+    };
+    write_docx(
+        &doc,
+        temp.path(),
+        &input,
+        &DocxWriteOptions {
+            allow_remote_images: false,
+            style_map: StyleMap::builtin(),
+            template: None,
+        },
+    )
+    .context("failed creating DOCX input fixture")?;
+
+    let first = run_docwarp([
+        "docx2md",
+        input.to_string_lossy().as_ref(),
+        "--output",
+        output.to_string_lossy().as_ref(),
+    ])?;
+    assert_command_status(&first, Some(0), "initial docx2md run should succeed")?;
+    let original_output = fs::read(&output).context("failed reading original markdown output")?;
+
+    let second = run_docwarp([
+        "docx2md",
+        input.to_string_lossy().as_ref(),
+        "--output",
+        output.to_string_lossy().as_ref(),
+    ])?;
+    assert_command_status(&second, Some(0), "overwrite docx2md run should succeed")?;
+    assert!(
+        stdout_text(&second).contains("backup created ✓"),
+        "expected backup creation log line, got:\n{}",
+        stdout_text(&second)
+    );
+
+    let backup_dir = temp.path().join("docwarp_backups");
+    let backups = collect_backup_files(&backup_dir, "out.md")?;
+    assert_eq!(
+        backups.len(),
+        1,
+        "expected one backup file after overwrite, found {} in {}",
+        backups.len(),
+        backup_dir.display()
+    );
+    let backup_bytes = fs::read(&backups[0]).context("failed reading backup file")?;
+    assert_eq!(
+        backups[0].extension().and_then(OsStr::to_str),
+        Some("md"),
+        "backup should keep native Markdown extension"
+    );
+    assert_eq!(
+        backup_bytes, original_output,
+        "backup should preserve bytes from original markdown output"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn no_backup_flag_disables_overwrite_backups() -> Result<()> {
+    let temp = tempdir().context("tempdir should be created")?;
+    let input = temp.path().join("input.md");
+    let output = temp.path().join("out.docx");
+
+    fs::write(&input, "# Title\n\nv1\n").context("failed writing markdown v1")?;
+    let first = run_docwarp([
+        "md2docx",
+        input.to_string_lossy().as_ref(),
+        "--output",
+        output.to_string_lossy().as_ref(),
+    ])?;
+    assert_command_status(&first, Some(0), "initial md2docx run should succeed")?;
+
+    fs::write(&input, "# Title\n\nv2\n").context("failed writing markdown v2")?;
+    let second = run_docwarp([
+        "md2docx",
+        input.to_string_lossy().as_ref(),
+        "--output",
+        output.to_string_lossy().as_ref(),
+        "--no-backup",
+    ])?;
+    assert_command_status(
+        &second,
+        Some(0),
+        "overwrite md2docx with no-backup should succeed",
+    )?;
+    assert!(
+        !stdout_text(&second).contains("backup created ✓"),
+        "did not expect backup creation log line, got:\n{}",
+        stdout_text(&second)
+    );
+
+    let backups = collect_backup_files(&temp.path().join("docwarp_backups"), "out.docx")?;
+    assert!(
+        backups.is_empty(),
+        "expected no backup files when --no-backup is set, found {}",
+        backups.len()
+    );
+
+    Ok(())
+}
+
+#[test]
+fn backup_retention_keeps_latest_n_files() -> Result<()> {
+    let temp = tempdir().context("tempdir should be created")?;
+    let input = temp.path().join("input.md");
+    let output = temp.path().join("out.docx");
+    let backup_dir = temp.path().join("custom-backups");
+
+    fs::write(&input, "# Title\n\nv0\n").context("failed writing markdown v0")?;
+    let setup = run_docwarp([
+        "md2docx",
+        input.to_string_lossy().as_ref(),
+        "--output",
+        output.to_string_lossy().as_ref(),
+    ])?;
+    assert_command_status(&setup, Some(0), "setup md2docx run should succeed")?;
+
+    for idx in 1..=3 {
+        fs::write(&input, format!("# Title\n\nv{idx}\n"))
+            .with_context(|| format!("failed writing markdown v{idx}"))?;
+        let run = run_docwarp([
+            "md2docx",
+            input.to_string_lossy().as_ref(),
+            "--output",
+            output.to_string_lossy().as_ref(),
+            "--backup-dir",
+            backup_dir.to_string_lossy().as_ref(),
+            "--backup-keep",
+            "2",
+        ])?;
+        assert_command_status(
+            &run,
+            Some(0),
+            &format!("overwrite run {idx} with retention should succeed"),
+        )?;
+        thread::sleep(Duration::from_millis(1));
+    }
+
+    let backups = collect_backup_files(&backup_dir, "out.docx")?;
+    assert_eq!(
+        backups.len(),
+        2,
+        "expected retention to keep only 2 backups, found {} in {}",
+        backups.len(),
+        backup_dir.display()
+    );
+
+    Ok(())
+}
+
+#[test]
 fn invalid_style_map_returns_fatal_error() -> Result<()> {
     let temp = tempdir().context("tempdir should be created")?;
     let input = temp.path().join("input.md");
@@ -469,6 +683,65 @@ fn stdout_text(output: &Output) -> String {
 
 fn stderr_text(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
+fn collect_backup_files(backup_dir: &Path, output_file_name: &str) -> Result<Vec<PathBuf>> {
+    if !backup_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let output_path = Path::new(output_file_name);
+    let output_name = output_path
+        .file_name()
+        .and_then(OsStr::to_str)
+        .unwrap_or(output_file_name);
+    let expected_stem = output_path
+        .file_stem()
+        .and_then(OsStr::to_str)
+        .unwrap_or(output_name);
+    let expected_extension_suffix = output_path
+        .extension()
+        .and_then(OsStr::to_str)
+        .filter(|value| !value.is_empty())
+        .map(|value| format!(".{value}"))
+        .unwrap_or_default();
+    let expected_prefix = format!("{expected_stem}--");
+    let mut backups = Vec::new();
+    for entry in fs::read_dir(backup_dir)
+        .with_context(|| format!("failed reading backup directory: {}", backup_dir.display()))?
+    {
+        let entry = entry.with_context(|| {
+            format!(
+                "failed reading backup directory entry: {}",
+                backup_dir.display()
+            )
+        })?;
+        if !entry
+            .file_type()
+            .with_context(|| {
+                format!(
+                    "failed reading backup file type: {}",
+                    entry.path().display()
+                )
+            })?
+            .is_file()
+        {
+            continue;
+        }
+
+        let path = entry.path();
+        let Some(file_name) = path.file_name().and_then(OsStr::to_str) else {
+            continue;
+        };
+        if file_name.starts_with(&expected_prefix)
+            && file_name.ends_with(&expected_extension_suffix)
+        {
+            backups.push(path);
+        }
+    }
+
+    backups.sort();
+    Ok(backups)
 }
 
 fn normalize_document_semantics(document: &mut Document) {

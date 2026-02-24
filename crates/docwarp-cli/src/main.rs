@@ -1,5 +1,7 @@
+use std::collections::hash_map::DefaultHasher;
 use std::env;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process;
@@ -12,7 +14,8 @@ use docwarp_core::{
     UnsupportedPolicy, resolve_style_map, style_map,
 };
 use docwarp_docx::{
-    DocxReadOptions, DocxWriteOptions, is_password_protected_docx, read_docx, write_docx,
+    DocxReadOptions, DocxWriteOptions, extract_style_map_from_template, is_password_protected_docx,
+    read_docx, write_docx,
 };
 use docwarp_md::{parse_markdown, render_markdown};
 use glob::Pattern;
@@ -24,21 +27,25 @@ Run without arguments to use guided mode.\n\
 \n\
 The tool also supports directional subcommands:\n\
 - md2docx: convert Markdown into DOCX\n\
-- docx2md: convert DOCX into Markdown";
+- docx2md: convert DOCX into Markdown\n\
+- template-map: extract reusable YAML/JSON style maps from a DOCX/DOTX template";
 
 const CLI_AFTER_LONG_HELP: &str = "Examples:\n\
   docwarp\n\
   docwarp md2docx ./docs/spec.md --output ./build/spec.docx\n\
   docwarp md2docx ./docs/spec.md --output ./build/spec.docx --strict --report ./build/report.json\n\
   docwarp docx2md ./contracts/master.docx --output ./contracts/master.md --assets-dir ./contracts/assets\n\
+  docwarp template-map ./styles/brand.dotx --output-dir ./styles\n\
 \n\
 Run command-specific help for detailed examples:\n\
   docwarp md2docx --help\n\
-  docwarp docx2md --help";
+  docwarp docx2md --help\n\
+  docwarp template-map --help";
 
 const MD2DOCX_AFTER_LONG_HELP: &str = "Examples:\n\
   docwarp md2docx ./input.md --output ./output.docx\n\
   docwarp md2docx ./input.md --output ./output.docx --template ./brand.dotx --style-map ./style-map.yml\n\
+  docwarp md2docx ./input.md --output ./output.docx --backup-dir ./docwarp_backups --backup-keep 10\n\
   docwarp md2docx ./docs --output ./build/docx --glob \"**/*.md\"\n\
   docwarp md2docx ./input.md --output ./output.docx --config ./.docwarp.yml\n\
   docwarp md2docx ./input.md --output ./output.docx --report ./report.json --strict\n\
@@ -47,11 +54,20 @@ const MD2DOCX_AFTER_LONG_HELP: &str = "Examples:\n\
 const DOCX2MD_AFTER_LONG_HELP: &str = "Examples:\n\
   docwarp docx2md ./input.docx --output ./output.md\n\
   docwarp docx2md ./protected.docx --output ./output.md --password \"secret\"\n\
+  docwarp docx2md ./input.docx --output ./output.md --backup-dir ./docwarp_backups --backup-keep 10\n\
   docwarp docx2md ./input.docx --output ./output.md --assets-dir ./output_assets\n\
   docwarp docx2md ./contracts --output ./build/md --glob \"**/*.docx\"\n\
   docwarp docx2md ./input.docx --output ./output.md --style-map ./style-map.json\n\
   docwarp docx2md ./input.docx --output ./output.md --config ./.docwarp.yml --report ./report.json\n\
   docwarp docx2md ./input.docx --output ./output.md --strict";
+
+const TEMPLATE_MAP_AFTER_LONG_HELP: &str = "Examples:\n\
+  docwarp template-map ./brand.dotx\n\
+  docwarp template-map ./brand.dotx --output-dir ./styles\n\
+  docwarp template-map ./brand.dotx --output-dir ./styles --name acme-brand";
+
+const DEFAULT_BACKUP_KEEP: usize = 20;
+const DEFAULT_BACKUP_DIR_NAME: &str = "docwarp_backups";
 
 #[derive(Debug, Parser)]
 #[command(name = "docwarp")]
@@ -89,6 +105,17 @@ enum Commands {
         strict: bool,
         #[arg(long = "allow-remote-images")]
         allow_remote_images: bool,
+        #[arg(long = "no-backup")]
+        no_backup: bool,
+        #[arg(long = "backup-dir")]
+        backup_dir: Option<PathBuf>,
+        #[arg(
+            long = "backup-keep",
+            value_name = "N",
+            default_value_t = DEFAULT_BACKUP_KEEP,
+            value_parser = parse_positive_usize
+        )]
+        backup_keep: usize,
     },
     /// Convert DOCX to Markdown
     #[command(after_long_help = DOCX2MD_AFTER_LONG_HELP)]
@@ -114,7 +141,54 @@ enum Commands {
         password: Option<String>,
         #[arg(long)]
         strict: bool,
+        #[arg(long = "no-backup")]
+        no_backup: bool,
+        #[arg(long = "backup-dir")]
+        backup_dir: Option<PathBuf>,
+        #[arg(
+            long = "backup-keep",
+            value_name = "N",
+            default_value_t = DEFAULT_BACKUP_KEEP,
+            value_parser = parse_positive_usize
+        )]
+        backup_keep: usize,
     },
+    /// Extract style maps from a DOCX/DOTX template
+    #[command(after_long_help = TEMPLATE_MAP_AFTER_LONG_HELP)]
+    TemplateMap {
+        template: PathBuf,
+        #[arg(long = "output-dir", default_value = ".")]
+        output_dir: PathBuf,
+        #[arg(long = "name")]
+        name: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone)]
+struct BackupPolicy {
+    enabled: bool,
+    backup_dir: Option<PathBuf>,
+    keep: usize,
+}
+
+impl BackupPolicy {
+    fn from_cli(no_backup: bool, backup_dir: Option<PathBuf>, keep: usize) -> Self {
+        Self {
+            enabled: !no_backup,
+            backup_dir,
+            keep,
+        }
+    }
+}
+
+fn parse_positive_usize(value: &str) -> Result<usize, String> {
+    let parsed = value
+        .parse::<usize>()
+        .map_err(|_| format!("invalid positive integer value: {value}"))?;
+    if parsed == 0 {
+        return Err("value must be at least 1".to_string());
+    }
+    Ok(parsed)
 }
 
 fn main() {
@@ -146,6 +220,9 @@ fn run(cli: Cli) -> Result<i32> {
             report,
             strict,
             allow_remote_images,
+            no_backup,
+            backup_dir,
+            backup_keep,
         }) => run_md2docx(
             input,
             output,
@@ -156,6 +233,7 @@ fn run(cli: Cli) -> Result<i32> {
             report,
             strict,
             allow_remote_images,
+            BackupPolicy::from_cli(no_backup, backup_dir, backup_keep),
         ),
         Some(Commands::Docx2md {
             input,
@@ -167,9 +245,26 @@ fn run(cli: Cli) -> Result<i32> {
             report,
             password,
             strict,
+            no_backup,
+            backup_dir,
+            backup_keep,
         }) => run_docx2md(
-            input, output, glob, assets_dir, style_map, config, report, password, strict,
+            input,
+            output,
+            glob,
+            assets_dir,
+            style_map,
+            config,
+            report,
+            password,
+            strict,
+            BackupPolicy::from_cli(no_backup, backup_dir, backup_keep),
         ),
+        Some(Commands::TemplateMap {
+            template,
+            output_dir,
+            name,
+        }) => run_template_map(template, output_dir, name),
         None => run_guided_mode(),
     }
 }
@@ -380,11 +475,27 @@ enum NativePickerOutcome {
     Unavailable,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone)]
 struct GuidedOptions {
     template: Option<PathBuf>,
     profile: Option<String>,
     allow_remote_images: bool,
+    backup_enabled: bool,
+    backup_keep: usize,
+    backup_dir: Option<PathBuf>,
+}
+
+impl Default for GuidedOptions {
+    fn default() -> Self {
+        Self {
+            template: None,
+            profile: None,
+            allow_remote_images: false,
+            backup_enabled: true,
+            backup_keep: DEFAULT_BACKUP_KEEP,
+            backup_dir: None,
+        }
+    }
 }
 
 impl GuidedDirection {
@@ -414,6 +525,11 @@ fn run_guided_mode() -> Result<i32> {
             None,
             false,
             options.allow_remote_images,
+            BackupPolicy::from_cli(
+                !options.backup_enabled,
+                options.backup_dir.clone(),
+                options.backup_keep,
+            ),
         ),
         GuidedDirection::DocxToMd => run_docx2md(
             input,
@@ -425,6 +541,11 @@ fn run_guided_mode() -> Result<i32> {
             None,
             docx_password,
             false,
+            BackupPolicy::from_cli(
+                !options.backup_enabled,
+                options.backup_dir.clone(),
+                options.backup_keep,
+            ),
         ),
     }
 }
@@ -512,6 +633,15 @@ fn open_guided_options_menu(options: &mut GuidedOptions) -> Result<()> {
                 "blocked (default)"
             }
         );
+        println!(
+            "4) backup enabled: {}",
+            if options.backup_enabled { "yes" } else { "no" }
+        );
+        println!("5) backup max count: {}", options.backup_keep);
+        println!(
+            "6) backup directory: {}",
+            display_backup_dir_option(options.backup_dir.as_deref())
+        );
         println!("q) back");
 
         let selection = prompt_line("Select option: ")?;
@@ -519,6 +649,9 @@ fn open_guided_options_menu(options: &mut GuidedOptions) -> Result<()> {
             "1" => configure_template_option(options)?,
             "2" => configure_profile_option(options)?,
             "3" => configure_remote_image_option(options),
+            "4" => configure_backup_enabled_option(options),
+            "5" => configure_backup_max_count_option(options)?,
+            "6" => configure_backup_dir_option(options)?,
             "q" | "Q" => break,
             _ => eprintln!("invalid selection: {}", selection.trim()),
         }
@@ -600,6 +733,69 @@ fn configure_remote_image_option(options: &mut GuidedOptions) {
     );
 }
 
+fn configure_backup_enabled_option(options: &mut GuidedOptions) {
+    options.backup_enabled = !options.backup_enabled;
+    println!(
+        "backup {}",
+        if options.backup_enabled {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
+}
+
+fn configure_backup_max_count_option(options: &mut GuidedOptions) -> Result<()> {
+    println!();
+    println!(
+        "Current backup max count: {} (type '-' to reset to default: {})",
+        options.backup_keep, DEFAULT_BACKUP_KEEP
+    );
+    let raw = prompt_line("Backup max count: ")?;
+    let normalized = raw.trim();
+    if normalized == "-" {
+        options.backup_keep = DEFAULT_BACKUP_KEEP;
+        println!("backup max count reset to {}", DEFAULT_BACKUP_KEEP);
+        return Ok(());
+    }
+    if normalized.is_empty() {
+        println!("backup max count unchanged");
+        return Ok(());
+    }
+
+    let parsed = parse_positive_usize(normalized).map_err(anyhow::Error::msg)?;
+    options.backup_keep = parsed;
+    println!("backup max count set: {parsed}");
+    Ok(())
+}
+
+fn configure_backup_dir_option(options: &mut GuidedOptions) -> Result<()> {
+    println!();
+    println!(
+        "Backup directory is currently: {}",
+        display_backup_dir_option(options.backup_dir.as_deref())
+    );
+    println!(
+        "Set backup directory path, press Enter to keep current value, or type '-' for default."
+    );
+    let raw = prompt_line("Backup directory: ")?;
+    let normalized = raw.trim();
+    if normalized == "-" {
+        options.backup_dir = None;
+        println!("backup directory reset to default (output/docwarp_backups)");
+        return Ok(());
+    }
+    if normalized.is_empty() {
+        println!("backup directory unchanged");
+        return Ok(());
+    }
+
+    let path = parse_user_path(normalized);
+    options.backup_dir = Some(path.clone());
+    println!("backup directory set: {}", path.display());
+    Ok(())
+}
+
 fn validate_template_path(path: &Path) -> Result<()> {
     if !path.exists() {
         return Err(anyhow!("template path does not exist: {}", path.display()));
@@ -625,6 +821,11 @@ fn validate_template_path(path: &Path) -> Result<()> {
 fn display_optional_path(path: Option<&Path>) -> String {
     path.map(|value| value.display().to_string())
         .unwrap_or_else(|| "(none)".to_string())
+}
+
+fn display_backup_dir_option(path: Option<&Path>) -> String {
+    path.map(|value| value.display().to_string())
+        .unwrap_or_else(|| "(default: output/docwarp_backups)".to_string())
 }
 
 fn should_offer_native_picker() -> bool {
@@ -1008,6 +1209,7 @@ fn run_md2docx(
     report_path: Option<PathBuf>,
     strict_flag: bool,
     allow_remote_images: bool,
+    backup_policy: BackupPolicy,
 ) -> Result<i32> {
     let (config_file, config) = load_config_with_auto_discovery(config_path.as_deref())?;
     ensure_exists(&input)?;
@@ -1039,6 +1241,7 @@ fn run_md2docx(
             report_path.as_deref(),
             strict,
             allow_remote_images,
+            &backup_policy,
         )?;
         return Ok(exit_code_from_warnings(&warnings, strict));
     }
@@ -1069,6 +1272,7 @@ fn run_md2docx(
             batch_report.as_deref(),
             strict,
             allow_remote_images,
+            &backup_policy,
         ) {
             Ok(warnings) => {
                 outcome.converted += 1;
@@ -1099,6 +1303,7 @@ fn run_docx2md(
     report_path: Option<PathBuf>,
     password: Option<String>,
     strict_flag: bool,
+    backup_policy: BackupPolicy,
 ) -> Result<i32> {
     let (config_file, config) = load_config_with_auto_discovery(config_path.as_deref())?;
     ensure_exists(&input)?;
@@ -1124,6 +1329,7 @@ fn run_docx2md(
             report_path.as_deref(),
             password.as_deref(),
             strict,
+            &backup_policy,
         )?;
         return Ok(exit_code_from_warnings(&warnings, strict));
     }
@@ -1155,6 +1361,7 @@ fn run_docx2md(
             batch_report.as_deref(),
             password.as_deref(),
             strict,
+            &backup_policy,
         ) {
             Ok(warnings) => {
                 outcome.converted += 1;
@@ -1173,6 +1380,58 @@ fn run_docx2md(
 
     emit_batch_summary("docx2md", &input, &output, &outcome, strict);
     Ok(exit_code_from_batch(&outcome, strict))
+}
+
+fn run_template_map(template: PathBuf, output_dir: PathBuf, name: Option<String>) -> Result<i32> {
+    validate_template_path(&template)?;
+
+    let base_name = match name {
+        Some(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                return Err(anyhow!("--name cannot be empty"));
+            }
+            if trimmed.contains('/') || trimmed.contains('\\') {
+                return Err(anyhow!(
+                    "--name should be a file name stem, not a path: {trimmed}"
+                ));
+            }
+            trimmed.to_string()
+        }
+        None => default_template_map_name(&template),
+    };
+
+    fs::create_dir_all(&output_dir).with_context(|| {
+        format!(
+            "failed creating template-map output directory: {}",
+            output_dir.display()
+        )
+    })?;
+
+    let style_map = extract_style_map_from_template(&template)?;
+    let yaml = serde_yaml::to_string(&style_map).context("failed serializing YAML style map")?;
+    let json =
+        serde_json::to_string_pretty(&style_map).context("failed serializing JSON style map")?;
+
+    let yaml_path = output_dir.join(format!("{base_name}.yml"));
+    let json_path = output_dir.join(format!("{base_name}.json"));
+    write_text_file_atomic(&yaml_path, &yaml, "template style map YAML")?;
+    write_text_file_atomic(&json_path, &json, "template style map JSON")?;
+
+    println!("template-map extracted from {}", template.display());
+    println!("yaml: {}", yaml_path.display());
+    println!("json: {}", json_path.display());
+
+    Ok(0)
+}
+
+fn default_template_map_name(template_path: &Path) -> String {
+    template_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .map(|value| format!("{value}-style-map"))
+        .unwrap_or_else(|| "style-map".to_string())
 }
 
 fn ensure_exists(path: &Path) -> Result<()> {
@@ -1307,6 +1566,159 @@ fn temporary_backup_path(destination: &Path) -> PathBuf {
     parent.join(format!(".{name}.docwarp-backup-{}-{now}", process::id()))
 }
 
+fn maybe_backup_existing_output(output: &Path, backup_policy: &BackupPolicy) -> Result<()> {
+    if !backup_policy.enabled || !output.exists() {
+        return Ok(());
+    }
+    if !output.is_file() {
+        return Err(anyhow!(
+            "output path must be a file when backups are enabled: {}",
+            output.display()
+        ));
+    }
+
+    let backup_dir = resolve_backup_dir(output, backup_policy.backup_dir.as_deref())?;
+    fs::create_dir_all(&backup_dir).with_context(|| {
+        format!(
+            "failed creating backup directory for output overwrite: {}",
+            backup_dir.display()
+        )
+    })?;
+
+    let output_name = output
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("output");
+    let output_stem = output
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or(output_name);
+    let output_extension_suffix = output
+        .extension()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .map(|value| format!(".{value}"))
+        .unwrap_or_default();
+    let fingerprint = backup_target_fingerprint(output)?;
+    let backup_prefix = format!("{output_stem}--{fingerprint}--");
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let backup_path = backup_dir.join(format!(
+        "{backup_prefix}{timestamp}{output_extension_suffix}"
+    ));
+
+    fs::copy(output, &backup_path).with_context(|| {
+        format!(
+            "failed creating backup before overwrite: {} -> {}",
+            output.display(),
+            backup_path.display()
+        )
+    })?;
+    println!("backup created ✓");
+
+    if let Err(err) = prune_backups(
+        &backup_dir,
+        &backup_prefix,
+        &output_extension_suffix,
+        backup_policy.keep,
+    ) {
+        eprintln!(
+            "warning: failed pruning backups in {}: {err:#}",
+            backup_dir.display()
+        );
+    }
+
+    Ok(())
+}
+
+fn resolve_backup_dir(output: &Path, configured_backup_dir: Option<&Path>) -> Result<PathBuf> {
+    if let Some(path) = configured_backup_dir {
+        if path.is_absolute() {
+            return Ok(path.to_path_buf());
+        }
+        let cwd = std::env::current_dir().context("failed reading current working directory")?;
+        return Ok(cwd.join(path));
+    }
+
+    let parent = output.parent().unwrap_or_else(|| Path::new("."));
+    Ok(parent.join(DEFAULT_BACKUP_DIR_NAME))
+}
+
+fn backup_target_fingerprint(output: &Path) -> Result<String> {
+    let normalized = normalized_absolute_path(output)?;
+    let mut hasher = DefaultHasher::new();
+    normalized.to_string_lossy().hash(&mut hasher);
+    Ok(format!("{:016x}", hasher.finish()))
+}
+
+fn prune_backups(
+    backup_dir: &Path,
+    prefix: &str,
+    extension_suffix: &str,
+    keep: usize,
+) -> Result<()> {
+    if keep == 0 {
+        return Ok(());
+    }
+
+    let mut backups = Vec::new();
+    for entry in fs::read_dir(backup_dir).with_context(|| {
+        format!(
+            "failed reading backup directory for retention pruning: {}",
+            backup_dir.display()
+        )
+    })? {
+        let entry = entry.with_context(|| {
+            format!(
+                "failed reading backup directory entry while pruning: {}",
+                backup_dir.display()
+            )
+        })?;
+        let file_type = entry.file_type().with_context(|| {
+            format!(
+                "failed reading backup file type while pruning: {}",
+                entry.path().display()
+            )
+        })?;
+        if !file_type.is_file() {
+            continue;
+        }
+
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if name.starts_with(prefix) && name.ends_with(extension_suffix) {
+            backups.push(path);
+        }
+    }
+
+    backups.sort_by(|left, right| {
+        let left_name = left
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default();
+        let right_name = right
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default();
+        right_name.cmp(left_name)
+    });
+
+    for stale_path in backups.into_iter().skip(keep) {
+        fs::remove_file(&stale_path).with_context(|| {
+            format!(
+                "failed removing old backup during retention pruning: {}",
+                stale_path.display()
+            )
+        })?;
+    }
+
+    Ok(())
+}
+
 #[derive(Debug, Default)]
 struct BatchOutcome {
     converted: usize,
@@ -1322,6 +1734,7 @@ fn convert_md2docx_single(
     report_path: Option<&Path>,
     strict: bool,
     allow_remote_images: bool,
+    backup_policy: &BackupPolicy,
 ) -> Result<Vec<ConversionWarning>> {
     ensure_distinct_input_output_paths(input, output)?;
 
@@ -1334,6 +1747,8 @@ fn convert_md2docx_single(
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."));
+
+    maybe_backup_existing_output(output, backup_policy)?;
 
     let mut write_warnings = write_docx(
         &document,
@@ -1372,6 +1787,7 @@ fn convert_docx2md_single(
     report_path: Option<&Path>,
     password: Option<&str>,
     strict: bool,
+    backup_policy: &BackupPolicy,
 ) -> Result<Vec<ConversionWarning>> {
     ensure_distinct_input_output_paths(input, output)?;
 
@@ -1397,6 +1813,7 @@ fn convert_docx2md_single(
 
     rewrite_image_paths_relative_to_output(&mut document, &output_parent);
     let markdown = render_markdown(&document);
+    maybe_backup_existing_output(output, backup_policy)?;
     write_text_file_atomic(output, &markdown, "markdown output")?;
 
     let elapsed = started.elapsed();

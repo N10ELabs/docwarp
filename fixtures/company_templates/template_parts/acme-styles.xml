@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:docDefaults>
+    <w:rPrDefault>
+      <w:rPr>
+        <w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/>
+        <w:sz w:val="22"/>
+      </w:rPr>
+    </w:rPrDefault>
+    <w:pPrDefault><w:pPr/></w:pPrDefault>
+  </w:docDefaults>
+
+  <w:style w:type="paragraph" w:default="1" w:styleId="Normal">
+    <w:name w:val="Normal"/>
+    <w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:sz w:val="22"/></w:rPr>
+  </w:style>
+
+  <w:style w:type="paragraph" w:styleId="AcmeTitle">
+    <w:name w:val="Acme Title"/>
+    <w:basedOn w:val="Normal"/>
+    <w:qFormat/>
+    <w:pPr><w:spacing w:before="240" w:after="220"/></w:pPr>
+    <w:rPr>
+      <w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/>
+      <w:b/>
+      <w:color w:val="0B4F6C"/>
+      <w:sz w:val="52"/>
+    </w:rPr>
+  </w:style>
+
+  <w:style w:type="paragraph" w:styleId="AcmeHeading1">
+    <w:name w:val="Acme Heading 1"/>
+    <w:aliases w:val="Acme H1 Alias,ACME HEADING ONE"/>
+    <w:basedOn w:val="Normal"/>
+    <w:next w:val="AcmeBody"/>
+    <w:qFormat/>
+    <w:pPr><w:spacing w:before="220" w:after="140"/></w:pPr>
+    <w:rPr>
+      <w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/>
+      <w:b/>
+      <w:color w:val="0B4F6C"/>
+      <w:sz w:val="40"/>
+    </w:rPr>
+  </w:style>
+
+  <w:style w:type="paragraph" w:styleId="AcmeHeading2">
+    <w:name w:val="Acme Heading 2"/>
+    <w:basedOn w:val="Normal"/>
+    <w:next w:val="AcmeBody"/>
+    <w:qFormat/>
+    <w:pPr><w:spacing w:before="180" w:after="120"/></w:pPr>
+    <w:rPr><w:b/><w:color w:val="1B6B93"/><w:sz w:val="32"/></w:rPr>
+  </w:style>
+
+  <w:style w:type="paragraph" w:styleId="AcmeHeading3">
+    <w:name w:val="Acme Heading 3"/>
+    <w:basedOn w:val="Normal"/>
+    <w:next w:val="AcmeBody"/>
+    <w:qFormat/>
+    <w:pPr><w:spacing w:before="140" w:after="100"/></w:pPr>
+    <w:rPr><w:b/><w:color w:val="2B7C9F"/><w:sz w:val="28"/></w:rPr>
+  </w:style>
+
+  <w:style w:type="paragraph" w:styleId="AcmeHeading4">
+    <w:name w:val="Acme Heading 4"/>
+    <w:basedOn w:val="Normal"/>
+    <w:rPr><w:b/><w:color w:val="2B7C9F"/><w:sz w:val="26"/></w:rPr>
+  </w:style>
+
+  <w:style w:type="paragraph" w:styleId="AcmeHeading5">
+    <w:name w:val="Acme Heading 5"/>
+    <w:basedOn w:val="Normal"/>
+    <w:rPr><w:b/><w:color w:val="2B7C9F"/><w:sz w:val="24"/></w:rPr>
+  </w:style>
+
+  <w:style w:type="paragraph" w:styleId="AcmeHeading6">
+    <w:name w:val="Acme Heading 6"/>
+    <w:basedOn w:val="Normal"/>
+    <w:rPr><w:b/><w:color w:val="2B7C9F"/><w:sz w:val="22"/></w:rPr>
+  </w:style>
+
+  <w:style w:type="paragraph" w:styleId="AcmeBody">
+    <w:name w:val="Acme Body"/>
+    <w:basedOn w:val="Normal"/>
+    <w:pPr><w:spacing w:after="120"/></w:pPr>
+    <w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:sz w:val="22"/><w:color w:val="1F2933"/></w:rPr>
+  </w:style>
+
+  <w:style w:type="paragraph" w:styleId="AcmeQuote">
+    <w:name w:val="Acme Quote"/>
+    <w:basedOn w:val="AcmeBody"/>
+    <w:pPr>
+      <w:ind w:left="720"/>
+      <w:spacing w:before="80" w:after="140"/>
+      <w:pBdr><w:left w:val="single" w:sz="10" w:space="8" w:color="7AA6C2"/></w:pBdr>
+    </w:pPr>
+    <w:rPr><w:i/><w:color w:val="3E5667"/></w:rPr>
+  </w:style>
+
+  <w:style w:type="character" w:styleId="AcmeCodeInline">
+    <w:name w:val="Acme Code Inline"/>
+    <w:basedOn w:val="DefaultParagraphFont"/>
+    <w:rPr>
+      <w:rFonts w:ascii="Consolas" w:hAnsi="Consolas"/>
+      <w:color w:val="0F3E56"/>
+      <w:sz w:val="20"/>
+      <w:shd w:val="clear" w:color="auto" w:fill="EAF2F8"/>
+    </w:rPr>
+  </w:style>
+
+  <w:style w:type="paragraph" w:styleId="AcmeCodeBlock">
+    <w:name w:val="Acme Code Block"/>
+    <w:basedOn w:val="AcmeBody"/>
+    <w:link w:val="AcmeCodeInline"/>
+    <w:pPr>
+      <w:spacing w:before="80" w:after="140"/>
+      <w:ind w:left="360"/>
+      <w:shd w:val="clear" w:color="auto" w:fill="F4F7FA"/>
+    </w:pPr>
+    <w:rPr><w:rFonts w:ascii="Consolas" w:hAnsi="Consolas"/><w:sz w:val="20"/></w:rPr>
+  </w:style>
+
+  <w:style w:type="character" w:styleId="AcmeEquationInline">
+    <w:name w:val="Acme Equation Inline"/>
+    <w:rPr><w:color w:val="1B3C6B"/></w:rPr>
+  </w:style>
+
+  <w:style w:type="paragraph" w:styleId="AcmeEquationBlock">
+    <w:name w:val="Acme Equation Block"/>
+    <w:basedOn w:val="AcmeBody"/>
+    <w:pPr><w:jc w:val="center"/><w:spacing w:before="80" w:after="140"/></w:pPr>
+  </w:style>
+
+  <w:style w:type="paragraph" w:styleId="AcmeBulletList">
+    <w:name w:val="Acme Bullet List"/>
+    <w:aliases w:val="Acme Bullet Alias"/>
+    <w:basedOn w:val="AcmeBody"/>
+    <w:pPr>
+      <w:numPr><w:ilvl w:val="1"/><w:numId w:val="77"/></w:numPr>
+      <w:spacing w:after="60"/>
+    </w:pPr>
+  </w:style>
+
+  <w:style w:type="paragraph" w:styleId="AcmeNumberList">
+    <w:name w:val="Acme Number List"/>
+    <w:aliases w:val="Acme Number Alias"/>
+    <w:basedOn w:val="AcmeBody"/>
+    <w:pPr>
+      <w:numPr><w:ilvl w:val="0"/><w:numId w:val="88"/></w:numPr>
+      <w:spacing w:after="60"/>
+    </w:pPr>
+  </w:style>
+
+  <w:style w:type="table" w:styleId="AcmeTable">
+    <w:name w:val="Acme Table"/>
+    <w:tblPr>
+      <w:tblBorders>
+        <w:top w:val="single" w:sz="8" w:color="7AA6C2"/>
+        <w:left w:val="single" w:sz="8" w:color="7AA6C2"/>
+        <w:bottom w:val="single" w:sz="8" w:color="7AA6C2"/>
+        <w:right w:val="single" w:sz="8" w:color="7AA6C2"/>
+        <w:insideH w:val="single" w:sz="6" w:color="C5D6E3"/>
+        <w:insideV w:val="single" w:sz="6" w:color="C5D6E3"/>
+      </w:tblBorders>
+    </w:tblPr>
+    <w:tblStylePr w:type="firstRow">
+      <w:rPr><w:b/><w:color w:val="FFFFFF"/></w:rPr>
+      <w:tblPr><w:shd w:val="clear" w:color="auto" w:fill="2F6F8F"/></w:tblPr>
+    </w:tblStylePr>
+  </w:style>
+</w:styles>
