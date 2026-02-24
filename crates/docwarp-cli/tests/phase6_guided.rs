@@ -23,8 +23,8 @@ fn guided_mode_converts_markdown_file_with_default_output() -> Result<()> {
     );
     assert_guided_startup_header(&stdout);
     assert!(
-        stdout.contains("Converting: Markdown -> DOCX"),
-        "expected guided conversion label, got:\n{}",
+        !stdout.contains("Converting:"),
+        "did not expect guided conversion preamble, got:\n{}",
         stdout
     );
     assert!(

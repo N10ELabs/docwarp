@@ -2,10 +2,45 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
+const DOCX_TO_MD_ALLOWED_TOKENS: [&str; 13] = [
+    "title",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "paragraph",
+    "quote",
+    "code",
+    "list_bullet",
+    "list_number",
+    "table",
+];
+
+const MD_TO_DOCX_ALLOWED_TOKENS: [&str; 15] = [
+    "title",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "paragraph",
+    "quote",
+    "code",
+    "equation_inline",
+    "equation_block",
+    "list_bullet",
+    "list_number",
+    "table",
+];
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct StyleMap {
     #[serde(default)]
     pub docx_to_md: BTreeMap<String, String>,
@@ -81,12 +116,7 @@ pub fn load_style_map(path: &Path) -> Result<StyleMap> {
     let raw = fs::read_to_string(path)
         .with_context(|| format!("failed reading style map: {}", path.display()))?;
 
-    match path.extension().and_then(|ext| ext.to_str()) {
-        Some("json") => serde_json::from_str(&raw)
-            .with_context(|| format!("invalid JSON style map: {}", path.display())),
-        _ => serde_yaml::from_str(&raw)
-            .with_context(|| format!("invalid YAML style map: {}", path.display())),
-    }
+    parse_style_map(&raw, StyleMapFormat::from_path(path), path)
 }
 
 pub fn resolve_style_map(config_map: Option<StyleMap>, cli_map: Option<StyleMap>) -> StyleMap {
@@ -101,6 +131,191 @@ pub fn resolve_style_map(config_map: Option<StyleMap>, cli_map: Option<StyleMap>
     }
 
     merged
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StyleMapFormat {
+    Json,
+    Yaml,
+}
+
+impl StyleMapFormat {
+    fn from_path(path: &Path) -> Self {
+        match path.extension().and_then(|ext| ext.to_str()) {
+            Some("json") => Self::Json,
+            _ => Self::Yaml,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Json => "JSON",
+            Self::Yaml => "YAML",
+        }
+    }
+}
+
+fn parse_style_map(raw: &str, format: StyleMapFormat, path: &Path) -> Result<StyleMap> {
+    let style_map: StyleMap = match format {
+        StyleMapFormat::Json => serde_json::from_str(raw)
+            .with_context(|| format!("invalid JSON style map: {}", path.display()))?,
+        StyleMapFormat::Yaml => serde_yaml::from_str(raw)
+            .with_context(|| format!("invalid YAML style map: {}", path.display()))?,
+    };
+
+    validate_style_map(&style_map, path)
+        .with_context(|| format!("invalid {} style map: {}", format.name(), path.display()))?;
+
+    Ok(style_map)
+}
+
+fn validate_style_map(style_map: &StyleMap, path: &Path) -> Result<()> {
+    for (style_name, token) in &style_map.docx_to_md {
+        if style_name.trim().is_empty() {
+            bail!(
+                "found an empty DOCX style name key in `docx_to_md`; use a real style name like `Heading1`"
+            );
+        }
+
+        if token.trim().is_empty() {
+            let entry = format_map_entry("docx_to_md", style_name);
+            bail!("empty markdown token at `{entry}`; provide one of: {}", format_allowed_tokens(&DOCX_TO_MD_ALLOWED_TOKENS));
+        }
+
+        ensure_allowed_token(
+            path,
+            "docx_to_md",
+            style_name,
+            token,
+            &DOCX_TO_MD_ALLOWED_TOKENS,
+            true,
+        )?;
+    }
+
+    for (token, style_name) in &style_map.md_to_docx {
+        if token.trim().is_empty() {
+            bail!(
+                "found an empty markdown token key in `md_to_docx`; use one of: {}",
+                format_allowed_tokens(&MD_TO_DOCX_ALLOWED_TOKENS)
+            );
+        }
+
+        ensure_allowed_token(
+            path,
+            "md_to_docx",
+            token,
+            token,
+            &MD_TO_DOCX_ALLOWED_TOKENS,
+            false,
+        )?;
+
+        if style_name.trim().is_empty() {
+            let entry = format_map_entry("md_to_docx", token);
+            bail!("empty DOCX style name at `{entry}`; provide a Word style such as `Normal`");
+        }
+    }
+
+    Ok(())
+}
+
+fn ensure_allowed_token(
+    path: &Path,
+    section: &str,
+    entry_key: &str,
+    token: &str,
+    allowed: &[&str],
+    token_in_value_position: bool,
+) -> Result<()> {
+    if allowed.contains(&token) {
+        return Ok(());
+    }
+
+    let suggestion = suggest_token(token, allowed)
+        .map(|candidate| format!(" Did you mean `{candidate}`?"))
+        .unwrap_or_default();
+    let allowed_list = format_allowed_tokens(allowed);
+    let entry = format_map_entry(section, entry_key);
+
+    if token_in_value_position {
+        bail!(
+            "invalid markdown token `{token}` at `{entry}` in {}; values in `{section}` must be one of: {allowed_list}.{suggestion}",
+            path.display()
+        );
+    }
+
+    bail!(
+        "invalid markdown token key `{token}` at `{entry}` in {}; keys in `{section}` must be one of: {allowed_list}.{suggestion}",
+        path.display()
+    );
+}
+
+fn format_allowed_tokens(tokens: &[&str]) -> String {
+    tokens
+        .iter()
+        .map(|token| format!("`{token}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn format_map_entry(section: &str, key: &str) -> String {
+    if key
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+    {
+        format!("{section}.{key}")
+    } else {
+        let escaped = key.replace('"', "\\\"");
+        format!("{section}[\"{escaped}\"]")
+    }
+}
+
+fn suggest_token<'a>(actual: &str, allowed: &'a [&str]) -> Option<&'a str> {
+    let normalized_actual = actual.to_ascii_lowercase();
+    let mut best: Option<(&str, usize)> = None;
+
+    for candidate in allowed {
+        let distance = levenshtein(&normalized_actual, &candidate.to_ascii_lowercase());
+        match best {
+            None => best = Some((candidate, distance)),
+            Some((_, best_distance)) if distance < best_distance => {
+                best = Some((candidate, distance));
+            }
+            _ => {}
+        }
+    }
+
+    best.and_then(|(candidate, distance)| (distance <= 3).then_some(candidate))
+}
+
+fn levenshtein(a: &str, b: &str) -> usize {
+    if a == b {
+        return 0;
+    }
+    if a.is_empty() {
+        return b.chars().count();
+    }
+    if b.is_empty() {
+        return a.chars().count();
+    }
+
+    let a_chars: Vec<char> = a.chars().collect();
+    let b_chars: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b_chars.len()).collect();
+    let mut curr = vec![0; b_chars.len() + 1];
+
+    for (i, a_char) in a_chars.iter().enumerate() {
+        curr[0] = i + 1;
+        for (j, b_char) in b_chars.iter().enumerate() {
+            let replace_cost = usize::from(a_char != b_char);
+            let insert = curr[j] + 1;
+            let delete = prev[j + 1] + 1;
+            let replace = prev[j] + replace_cost;
+            curr[j + 1] = insert.min(delete).min(replace);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+
+    prev[b_chars.len()]
 }
 
 #[cfg(test)]
@@ -177,6 +392,58 @@ mod tests {
         assert_eq!(
             merged.md_to_docx.get("equation_block").map(String::as_str),
             Some("Equation")
+        );
+    }
+
+    fn parse_yaml(raw: &str) -> Result<StyleMap> {
+        parse_style_map(raw, StyleMapFormat::Yaml, Path::new("style-map.yml"))
+    }
+
+    #[test]
+    fn style_map_validation_reports_unknown_md_to_docx_token_keys() {
+        let err = parse_yaml("md_to_docx:\n  paragrph: Normal\n")
+            .expect_err("invalid markdown token key should fail");
+        let message = format!("{err:#}");
+
+        assert!(
+            message.contains("md_to_docx.paragrph"),
+            "expected map entry path in error, got:\n{message}"
+        );
+        assert!(
+            message.contains("Did you mean `paragraph`?"),
+            "expected token suggestion in error, got:\n{message}"
+        );
+        assert!(
+            message.contains("keys in `md_to_docx` must be one of"),
+            "expected allowed-token guidance in error, got:\n{message}"
+        );
+    }
+
+    #[test]
+    fn style_map_validation_reports_unknown_docx_to_md_token_values() {
+        let err = parse_yaml("docx_to_md:\n  Heading1: h7\n")
+            .expect_err("invalid markdown token value should fail");
+        let message = format!("{err:#}");
+
+        assert!(
+            message.contains("docx_to_md.Heading1"),
+            "expected map entry path in error, got:\n{message}"
+        );
+        assert!(
+            message.contains("values in `docx_to_md` must be one of"),
+            "expected allowed-token guidance in error, got:\n{message}"
+        );
+    }
+
+    #[test]
+    fn style_map_validation_rejects_empty_docx_style_name_keys() {
+        let err = parse_yaml("docx_to_md:\n  \"\": h1\n")
+            .expect_err("empty docx style names should fail");
+        let message = format!("{err:#}");
+
+        assert!(
+            message.contains("empty DOCX style name key"),
+            "expected clear key diagnostic, got:\n{message}"
         );
     }
 }

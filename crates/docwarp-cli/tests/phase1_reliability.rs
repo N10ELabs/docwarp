@@ -324,6 +324,40 @@ fn invalid_style_map_returns_fatal_error() -> Result<()> {
 }
 
 #[test]
+fn invalid_style_map_token_reports_actionable_diagnostic() -> Result<()> {
+    let temp = tempdir().context("tempdir should be created")?;
+    let input = temp.path().join("input.md");
+    let output = temp.path().join("out.docx");
+    let style_map = temp.path().join("invalid-style-map-token.yml");
+
+    fs::write(&input, "# Title\n\nBody\n").context("failed writing markdown")?;
+    fs::write(&style_map, "md_to_docx:\n  paragrph: Normal\n")
+        .context("failed writing invalid style-map token fixture")?;
+
+    let run = run_docwarp([
+        "md2docx",
+        input.to_string_lossy().as_ref(),
+        "--output",
+        output.to_string_lossy().as_ref(),
+        "--style-map",
+        style_map.to_string_lossy().as_ref(),
+    ])?;
+
+    assert_command_status(&run, Some(1), "invalid style map token should fail")?;
+    let stderr = stderr_text(&run);
+    assert!(
+        stderr.contains("md_to_docx.paragrph"),
+        "expected style-map entry path diagnostic, got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("Did you mean `paragraph`?"),
+        "expected style-map token suggestion, got:\n{stderr}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn invalid_template_in_strict_mode_exits_with_2_and_warning() -> Result<()> {
     let temp = tempdir().context("tempdir should be created")?;
     let input = temp.path().join("input.md");

@@ -388,13 +388,6 @@ struct GuidedOptions {
 }
 
 impl GuidedDirection {
-    fn label(self) -> &'static str {
-        match self {
-            GuidedDirection::MdToDocx => "Markdown -> DOCX",
-            GuidedDirection::DocxToMd => "DOCX -> Markdown",
-        }
-    }
-
     fn output_extension(self) -> &'static str {
         match self {
             GuidedDirection::MdToDocx => "docx",
@@ -409,12 +402,6 @@ fn run_guided_mode() -> Result<i32> {
     let direction = detect_guided_direction(&input)?;
     let docx_password = maybe_prompt_guided_docx_password(&input, direction)?;
     let output = default_guided_output_path(&input, direction);
-
-    println!();
-    println!("Converting: {}", direction.label());
-    println!("input:  {}", input.display());
-    println!("output: {}", output.display());
-    println!();
 
     match direction {
         GuidedDirection::MdToDocx => run_md2docx(
