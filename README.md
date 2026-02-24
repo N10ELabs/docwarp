@@ -12,7 +12,7 @@
 - **Template Support:** select your company Word template to preserve styles.
 - **Password Protected DOCX:** convert password protected DOCX files with password input.
 - **Simple UX:** guided mode with path pick/drag and auto conversion direction.
-- **Backup:** create timestamped backups of original files before conversion.
+- **Backups:** create timestamped backups of original files before conversion.
 - **Batch + Automation Ready:** directory input + `--glob`, config files, and optional JSON conversion reports.
 
 ## Install (Homebrew)
