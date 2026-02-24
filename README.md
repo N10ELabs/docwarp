@@ -23,16 +23,19 @@ brew install n10elabs/tap/docwarp
 
 ## Current Status
 
-`v0.1.0` is available and supports:
+`v0.1.1` is available and supports:
 
 - `docwarp md2docx` for Markdown -> DOCX
 - `docwarp docx2md` for DOCX -> Markdown
+- `docwarp template-map` for DOCX/DOTX style-map extraction (YAML/JSON)
 - guided mode when run without arguments
 - warning-first conversion with optional `--strict` exit behavior
 - optional JSON conversion reports
 - config file + style-map support
 - batch conversion via directory input + `--glob`
+- overwrite backup controls (`--no-backup`, `--backup-dir`, `--backup-keep`)
 - native Word equation round-tripping for `$...$` and `$$...$$` with equation style-map tokens
+- password-protected DOCX conversion with managed decryptor bootstrap + hash-verified runtime setup
 
 ## Quick Start
 

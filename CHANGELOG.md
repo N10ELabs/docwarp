@@ -4,8 +4,13 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-02-24
+
 ### Added
 
+- Homebrew/core submission guide at `docs/homebrew-core.md`.
+- Homebrew/core formula generation script at `scripts/generate_homebrew_core_formula.sh`.
+- Updated installation guidance for release formula assets and tap-based install flow.
 - `template-map` command for extracting reusable YAML/JSON style maps from DOCX/DOTX templates.
 - Overwrite backup controls for both directions: `--no-backup`, `--backup-dir`, and `--backup-keep`.
 - Native Word equation round-tripping for Markdown math (`$...$`, `$$...$$`) with style-map tokens (`equation_inline`, `equation_block`).
@@ -16,6 +21,8 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 
+- Homebrew formula metadata and checksums were updated for published release artifacts.
+- README/install docs were aligned with release distribution paths and naming.
 - DOCX style-map behavior and diagnostics were refined for template compatibility and clearer validation feedback.
 - CLI UX and docs were polished with updated examples, startup copy, and feature summaries.
 - Repository tracking was cleaned to remove generated review artifacts and local scratch conversion files.
@@ -24,14 +31,7 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
-- Homebrew/core submission guide at `docs/homebrew-core.md`.
-- Homebrew/core formula generation script at `scripts/generate_homebrew_core_formula.sh`.
-- Updated installation guidance for release formula assets and tap-based install flow.
-
-### Changed
-
-- Homebrew formula metadata and checksums were updated for published release artifacts.
-- README/install docs were aligned with release distribution paths and naming.
+- Pre-release candidate cut for validating the `v0.1.1` release workflow and distribution assets.
 
 ## [0.1.0] - 2026-02-21
 
