@@ -1,13 +1,19 @@
-# docwarp
-
-![docwarp CLI intro](docs/assets/cli_intro.png)
+<img src="docs/assets/cli_intro.png" alt="docwarp CLI intro" width="420" />
 
 > Agentic CLI Usage References:
 > 1. [`AGENTS.md`](AGENTS.md) as the canonical hub for agents using the `docwarp` CLI.
 > 2. `README.md` (this file) for commands and conversion flow.
 > 3. [`docs/strict-mode.md`](docs/strict-mode.md) for CI/quality gates.
 
-`docwarp` is a lightweight open-source CLI for converting documents between GitHub-Flavored Markdown and Microsoft Word-compatible DOCX.
+`docwarp` is an open-source Rust CLI for **Markdown ↔ DOCX** conversion.
+
+- **Agent Friendly:** CLI with instructions for agentic usage.
+- **Bidirectional:** `md ⇄ docx` with round-trip reliability.
+- **Math/Equations:** native Word equations for scientific notation and statistics.
+- **Preserved Styles:** headings, nested/mixed lists, tables, images, blockquotes, etc.
+- **Simple UX:** guided mode with path pick/drag and auto conversiondirection.
+- **Batch + automation ready:** directory input + `--glob`, config files, and optional JSON conversion reports.
+- **Word style control:** template + style-map support, `h1`-`h6` heading-style fidelity, and template style-map extraction (YAML/JSON).
 
 ## Install (Homebrew)
 
