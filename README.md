@@ -5,15 +5,15 @@
 > 2. `README.md` (this file) for commands and conversion flow.
 > 3. [`docs/strict-mode.md`](docs/strict-mode.md) for CI/quality gates.
 
-`docwarp` is an open-source Rust CLI for **Markdown ↔ DOCX** conversion.
-
+## Features
 - **Agent Friendly:** CLI with instructions for agentic usage.
 - **Bidirectional:** `md ⇄ docx` with round-trip reliability.
 - **Math/Equations:** native Word equations for scientific notation and statistics.
-- **Preserved Styles:** headings, nested/mixed lists, tables, images, blockquotes, etc.
-- **Simple UX:** guided mode with path pick/drag and auto conversiondirection.
-- **Batch + automation ready:** directory input + `--glob`, config files, and optional JSON conversion reports.
-- **Word style control:** template + style-map support, `h1`-`h6` heading-style fidelity, and template style-map extraction (YAML/JSON).
+- **Template Support:** select your company Word template to preserve styles.
+- **Password Protected DOCX:** convert password protected DOCX files with password input.
+- **Simple UX:** guided mode with path pick/drag and auto conversion direction.
+- **Backup:** create timestamped backups of original files before conversion.
+- **Batch + Automation Ready:** directory input + `--glob`, config files, and optional JSON conversion reports.
 
 ## Install (Homebrew)
 
