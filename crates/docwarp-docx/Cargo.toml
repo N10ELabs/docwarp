@@ -8,10 +8,10 @@ license.workspace = true
 anyhow.workspace = true
 quick-xml.workspace = true
 zip.workspace = true
-reqwest.workspace = true
+ureq.workspace = true
 docwarp-core = { path = "../docwarp-core" }
 tempfile.workspace = true
 latex2mathml.workspace = true
-office-crypto.workspace = true
+sha2.workspace = true
 
 [dev-dependencies]

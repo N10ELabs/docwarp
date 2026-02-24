@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
+use std::env;
 use std::fs;
 use std::io::{self, Read, Seek, Write};
 use std::path::{Path, PathBuf};
@@ -11,10 +12,10 @@ use docwarp_core::{
     Block, ConversionWarning, Document, Inline, StyleMap, WarningCode, model::inline_text,
 };
 use latex2mathml::{DisplayStyle, latex_to_mathml};
-use office_crypto::DecryptError as OfficeDecryptError;
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
-use reqwest::blocking::Client;
+use sha2::{Digest, Sha256};
+use ureq::Error as UreqError;
 use zip::ZipArchive;
 use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
@@ -35,6 +36,9 @@ const CODE_LANG_MARKER_PREFIX: &str = "[[docwarp-code-lang:";
 const CODE_LANG_MARKER_SUFFIX: &str = "]]";
 const EQUATION_MARKER_PREFIX: &str = "[[docwarp-eq:";
 const EQUATION_MARKER_SUFFIX: &str = "]]";
+const MSOFFCRYPTO_TOOL_VERSION: &str = "6.0.0";
+const MSOFFCRYPTO_TOOL_WHEEL_SHA256: &str =
+    "46c394ed5d9641e802fc79bf3fb0666a53748b23fa8c4aa634ae9d30d46fe397";
 
 #[derive(Debug, Clone)]
 pub struct DocxWriteOptions {
@@ -1821,32 +1825,30 @@ fn load_image(
             return None;
         }
 
-        match Client::new().get(src).send() {
-            Ok(response) => match response.error_for_status() {
-                Ok(ok_response) => match ok_response.bytes() {
-                    Ok(data) => data.to_vec(),
-                    Err(err) => {
-                        warnings.push(
-                            ConversionWarning::new(
-                                WarningCode::ImageLoadFailed,
-                                format!("Failed reading remote image bytes: {err}"),
-                            )
-                            .with_location(src),
-                        );
-                        return None;
-                    }
-                },
+        match ureq::get(src).call() {
+            Ok(mut response) => match response.body_mut().read_to_vec() {
+                Ok(data) => data,
                 Err(err) => {
                     warnings.push(
                         ConversionWarning::new(
                             WarningCode::ImageLoadFailed,
-                            format!("Failed downloading remote image: {err}"),
+                            format!("Failed reading remote image bytes: {err}"),
                         )
                         .with_location(src),
                     );
                     return None;
                 }
             },
+            Err(UreqError::StatusCode(status)) => {
+                warnings.push(
+                    ConversionWarning::new(
+                        WarningCode::ImageLoadFailed,
+                        format!("Failed downloading remote image: HTTP {status}"),
+                    )
+                    .with_location(src),
+                );
+                return None;
+            }
             Err(err) => {
                 warnings.push(
                     ConversionWarning::new(
@@ -2813,60 +2815,51 @@ fn decrypt_password_protected_docx(
     output_path: &Path,
     password: &str,
 ) -> Result<()> {
-    match decrypt_password_protected_docx_with_rust(input_path, output_path, password) {
+    match decrypt_password_protected_docx_with_python(input_path, output_path, password) {
         Ok(()) => Ok(()),
-        Err(rust_error) => {
-            match decrypt_password_protected_docx_with_python(input_path, output_path, password) {
-                Ok(()) => Ok(()),
-                Err(PythonDocxDecryptError::IncorrectPassword) => {
-                    Err(anyhow!("incorrect DOCX password"))
-                }
-                Err(PythonDocxDecryptError::MissingPackage) => Err(anyhow!(
-                    "unable to decrypt password-protected DOCX with built-in Rust decryptor ({}) and Python fallback: package 'msoffcrypto-tool' is not installed (install with: pip install msoffcrypto-tool). Verify the password, or install Python fallback support.",
-                    describe_rust_decrypt_error(&rust_error)
-                )),
-                Err(PythonDocxDecryptError::PythonNotFound) => Err(anyhow!(
-                    "unable to decrypt password-protected DOCX with built-in Rust decryptor ({}) and Python fallback: python3/python not found. Verify the password, or install Python fallback support.",
-                    describe_rust_decrypt_error(&rust_error)
-                )),
-                Err(PythonDocxDecryptError::LaunchFailed { python, source }) => Err(anyhow!(
-                    "unable to decrypt password-protected DOCX with built-in Rust decryptor ({}) and Python fallback: failed launching {python}: {source}",
-                    describe_rust_decrypt_error(&rust_error)
-                )),
-                Err(PythonDocxDecryptError::Failed { python, details }) => Err(anyhow!(
-                    "unable to decrypt password-protected DOCX with built-in Rust decryptor ({}) and Python fallback: failed with {python}: {details}",
-                    describe_rust_decrypt_error(&rust_error)
-                )),
-            }
-        }
+        Err(PythonDocxDecryptError::IncorrectPassword) => Err(anyhow!("incorrect DOCX password")),
+        Err(PythonDocxDecryptError::PythonNotFound) => Err(anyhow!(
+            "unable to decrypt password-protected DOCX: python3/python not found. Install Python 3 to enable managed decryptor bootstrap.",
+        )),
+        Err(PythonDocxDecryptError::BootstrapFailed { details }) => Err(anyhow!(
+            "unable to prepare managed Python decryptor runtime: {details}",
+        )),
+        Err(PythonDocxDecryptError::HashMismatch { expected, actual }) => Err(anyhow!(
+            "unable to prepare managed Python decryptor runtime: package hash mismatch (expected {expected}, got {actual})",
+        )),
+        Err(PythonDocxDecryptError::LaunchFailed { python, source }) => Err(anyhow!(
+            "unable to decrypt password-protected DOCX: failed launching {python}: {source}",
+        )),
+        Err(PythonDocxDecryptError::Failed { python, details }) => Err(anyhow!(
+            "unable to decrypt password-protected DOCX: failed with {python}: {details}",
+        )),
+        Err(PythonDocxDecryptError::InvalidOutput { python }) => Err(anyhow!(
+            "unable to decrypt password-protected DOCX: {python} returned output that is not a valid DOCX archive",
+        )),
     }
-}
-
-fn decrypt_password_protected_docx_with_rust(
-    input_path: &Path,
-    output_path: &Path,
-    password: &str,
-) -> std::result::Result<(), OfficeDecryptError> {
-    let decrypted_bytes = office_crypto::decrypt_from_file(input_path, password)?;
-    if !is_valid_decrypted_docx_archive(&decrypted_bytes) {
-        return Err(OfficeDecryptError::InvalidStructure);
-    }
-    fs::write(output_path, decrypted_bytes).map_err(OfficeDecryptError::IoError)?;
-    Ok(())
 }
 
 #[derive(Debug)]
 enum PythonDocxDecryptError {
-    MissingPackage,
     IncorrectPassword,
     PythonNotFound,
+    BootstrapFailed {
+        details: String,
+    },
+    HashMismatch {
+        expected: &'static str,
+        actual: String,
+    },
     LaunchFailed {
-        python: &'static str,
+        python: String,
         source: io::Error,
     },
     Failed {
-        python: &'static str,
+        python: String,
         details: String,
+    },
+    InvalidOutput {
+        python: String,
     },
 }
 
@@ -2875,15 +2868,14 @@ fn decrypt_password_protected_docx_with_python(
     output_path: &Path,
     password: &str,
 ) -> std::result::Result<(), PythonDocxDecryptError> {
+    let python = ensure_managed_python_with_msoffcrypto()?;
+    let python_label = python.display().to_string();
+
     let script = r#"
 import os
 import sys
 
-try:
-    import msoffcrypto
-except Exception:
-    sys.stderr.write("python module 'msoffcrypto' is not installed")
-    sys.exit(3)
+import msoffcrypto
 
 input_path = sys.argv[1]
 output_path = sys.argv[2]
@@ -2903,69 +2895,368 @@ except Exception as exc:
     sys.exit(2)
 "#;
 
-    let mut last_failure = None;
-    for python in ["python3", "python"] {
-        let output = match process::Command::new(python)
-            .arg("-c")
-            .arg(script)
-            .arg(input_path)
-            .arg(output_path)
-            .env("DOCWARP_DOCX_PASSWORD", password)
-            .output()
-        {
-            Ok(output) => output,
-            Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
+    let output = process::Command::new(&python)
+        .arg("-c")
+        .arg(script)
+        .arg(input_path)
+        .arg(output_path)
+        .env("DOCWARP_DOCX_PASSWORD", password)
+        .output()
+        .map_err(|source| PythonDocxDecryptError::LaunchFailed {
+            python: python_label.clone(),
+            source,
+        })?;
+
+    if output.status.success() {
+        let decrypted_bytes = match fs::read(output_path) {
+            Ok(bytes) => bytes,
             Err(err) => {
-                last_failure = Some(PythonDocxDecryptError::LaunchFailed {
-                    python,
-                    source: err,
+                return Err(PythonDocxDecryptError::Failed {
+                    python: python_label,
+                    details: format!("failed reading decrypted output: {err}"),
                 });
-                continue;
             }
         };
+        if !is_valid_decrypted_docx_archive(&decrypted_bytes) {
+            return Err(PythonDocxDecryptError::InvalidOutput {
+                python: python.display().to_string(),
+            });
+        }
+        return Ok(());
+    }
 
-        if output.status.success() {
-            return Ok(());
+    let details = command_failure_details(&output);
+    match output.status.code() {
+        Some(4) => Err(PythonDocxDecryptError::IncorrectPassword),
+        _ => Err(PythonDocxDecryptError::Failed {
+            python: python.display().to_string(),
+            details,
+        }),
+    }
+}
+
+fn ensure_managed_python_with_msoffcrypto() -> std::result::Result<PathBuf, PythonDocxDecryptError>
+{
+    let venv_dir = managed_python_venv_dir();
+    let managed_python = managed_python_executable(&venv_dir);
+
+    match probe_msoffcrypto_tool(&managed_python)? {
+        MsoffcryptoToolProbe::Version(version) if version == MSOFFCRYPTO_TOOL_VERSION => {
+            return Ok(managed_python);
+        }
+        _ => {}
+    }
+
+    let bootstrap_python = find_bootstrap_python()?;
+
+    if !managed_python.exists() {
+        if let Some(parent) = venv_dir.parent() {
+            fs::create_dir_all(parent).map_err(|err| PythonDocxDecryptError::BootstrapFailed {
+                details: format!(
+                    "failed creating managed runtime directory '{}': {err}",
+                    parent.display()
+                ),
+            })?;
         }
 
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let details = if !stderr.is_empty() {
-            stderr
-        } else if !stdout.is_empty() {
-            stdout
-        } else {
-            "unknown decryption failure".to_string()
-        };
-
-        match output.status.code() {
-            Some(3) => {
-                return Err(PythonDocxDecryptError::MissingPackage);
-            }
-            Some(4) => {
-                return Err(PythonDocxDecryptError::IncorrectPassword);
-            }
-            _ => {
-                last_failure = Some(PythonDocxDecryptError::Failed { python, details });
-            }
+        let output = process::Command::new(&bootstrap_python)
+            .arg("-m")
+            .arg("venv")
+            .arg(&venv_dir)
+            .output()
+            .map_err(|source| PythonDocxDecryptError::LaunchFailed {
+                python: bootstrap_python.display().to_string(),
+                source,
+            })?;
+        if !output.status.success() {
+            return Err(PythonDocxDecryptError::BootstrapFailed {
+                details: format!(
+                    "failed creating managed python virtualenv at '{}': {}",
+                    venv_dir.display(),
+                    command_failure_details(&output)
+                ),
+            });
         }
     }
 
-    Err(last_failure.unwrap_or(PythonDocxDecryptError::PythonNotFound))
+    install_msoffcrypto_with_hash(&managed_python)?;
+
+    match probe_msoffcrypto_tool(&managed_python)? {
+        MsoffcryptoToolProbe::Version(version) if version == MSOFFCRYPTO_TOOL_VERSION => {
+            Ok(managed_python)
+        }
+        MsoffcryptoToolProbe::Version(version) => Err(PythonDocxDecryptError::BootstrapFailed {
+            details: format!(
+                "managed runtime at '{}' reports msoffcrypto-tool=={} after installation (expected {})",
+                managed_python.display(),
+                version,
+                MSOFFCRYPTO_TOOL_VERSION
+            ),
+        }),
+        MsoffcryptoToolProbe::Missing => Err(PythonDocxDecryptError::BootstrapFailed {
+            details: format!(
+                "managed runtime at '{}' does not expose msoffcrypto-tool after installation",
+                managed_python.display()
+            ),
+        }),
+    }
 }
 
-fn describe_rust_decrypt_error(error: &OfficeDecryptError) -> String {
-    match error {
-        OfficeDecryptError::IoError(source) => format!("I/O error: {source}"),
-        OfficeDecryptError::InvalidHeader => "invalid encrypted container header".to_string(),
-        OfficeDecryptError::InvalidStructure => {
-            "incorrect password or unsupported encrypted structure".to_string()
+fn install_msoffcrypto_with_hash(
+    managed_python: &Path,
+) -> std::result::Result<(), PythonDocxDecryptError> {
+    let tempdir = tempfile::tempdir().map_err(|err| PythonDocxDecryptError::BootstrapFailed {
+        details: format!("failed creating temporary python bootstrap directory: {err}"),
+    })?;
+
+    let output = process::Command::new(managed_python)
+        .arg("-m")
+        .arg("pip")
+        .arg("download")
+        .arg("--disable-pip-version-check")
+        .arg("--no-input")
+        .arg("--no-deps")
+        .arg("--only-binary=:all:")
+        .arg("--dest")
+        .arg(tempdir.path())
+        .arg(format!("msoffcrypto-tool=={MSOFFCRYPTO_TOOL_VERSION}"))
+        .output()
+        .map_err(|source| PythonDocxDecryptError::LaunchFailed {
+            python: managed_python.display().to_string(),
+            source,
+        })?;
+    if !output.status.success() {
+        return Err(PythonDocxDecryptError::BootstrapFailed {
+            details: format!(
+                "failed downloading managed decryptor package: {}",
+                command_failure_details(&output)
+            ),
+        });
+    }
+
+    let wheel = find_downloaded_wheel(tempdir.path())?;
+    let hash = sha256_hex_file(&wheel)?;
+    if hash != MSOFFCRYPTO_TOOL_WHEEL_SHA256 {
+        return Err(PythonDocxDecryptError::HashMismatch {
+            expected: MSOFFCRYPTO_TOOL_WHEEL_SHA256,
+            actual: hash,
+        });
+    }
+
+    let output = process::Command::new(managed_python)
+        .arg("-m")
+        .arg("pip")
+        .arg("install")
+        .arg("--disable-pip-version-check")
+        .arg("--no-input")
+        .arg("--upgrade")
+        .arg(&wheel)
+        .output()
+        .map_err(|source| PythonDocxDecryptError::LaunchFailed {
+            python: managed_python.display().to_string(),
+            source,
+        })?;
+    if !output.status.success() {
+        return Err(PythonDocxDecryptError::BootstrapFailed {
+            details: format!(
+                "failed installing managed decryptor package: {}",
+                command_failure_details(&output)
+            ),
+        });
+    }
+
+    Ok(())
+}
+
+fn find_downloaded_wheel(
+    download_dir: &Path,
+) -> std::result::Result<PathBuf, PythonDocxDecryptError> {
+    let mut wheel = None;
+    let entries =
+        fs::read_dir(download_dir).map_err(|err| PythonDocxDecryptError::BootstrapFailed {
+            details: format!(
+                "failed reading managed decryptor download directory '{}': {err}",
+                download_dir.display()
+            ),
+        })?;
+
+    for entry in entries {
+        let entry = entry.map_err(|err| PythonDocxDecryptError::BootstrapFailed {
+            details: format!("failed iterating managed decryptor download directory: {err}"),
+        })?;
+        let path = entry.path();
+        if path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("whl"))
+        {
+            wheel = Some(path);
+            break;
         }
-        OfficeDecryptError::NotEncrypted => "file is not encrypted".to_string(),
-        OfficeDecryptError::Unimplemented(feature) => {
-            format!("unsupported encryption feature ({feature})")
+    }
+
+    wheel.ok_or_else(|| PythonDocxDecryptError::BootstrapFailed {
+        details: "managed decryptor bootstrap did not download a wheel artifact".to_string(),
+    })
+}
+
+fn sha256_hex_file(path: &Path) -> std::result::Result<String, PythonDocxDecryptError> {
+    let mut file = fs::File::open(path).map_err(|err| PythonDocxDecryptError::BootstrapFailed {
+        details: format!(
+            "failed reading downloaded package '{}': {err}",
+            path.display()
+        ),
+    })?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let read =
+            file.read(&mut buffer)
+                .map_err(|err| PythonDocxDecryptError::BootstrapFailed {
+                    details: format!(
+                        "failed hashing downloaded package '{}': {err}",
+                        path.display()
+                    ),
+                })?;
+        if read == 0 {
+            break;
         }
-        OfficeDecryptError::Unknown => "unknown decryption error".to_string(),
+        hasher.update(&buffer[..read]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+#[derive(Debug)]
+enum MsoffcryptoToolProbe {
+    Missing,
+    Version(String),
+}
+
+fn probe_msoffcrypto_tool(
+    python: &Path,
+) -> std::result::Result<MsoffcryptoToolProbe, PythonDocxDecryptError> {
+    if !python.exists() {
+        return Ok(MsoffcryptoToolProbe::Missing);
+    }
+
+    let script = r#"
+import sys
+try:
+    import importlib.metadata as md
+except Exception:
+    try:
+        import importlib_metadata as md
+    except Exception:
+        sys.exit(3)
+for name in ("msoffcrypto-tool", "msoffcrypto_tool"):
+    try:
+        sys.stdout.write(md.version(name))
+        sys.exit(0)
+    except Exception:
+        pass
+sys.exit(3)
+"#;
+
+    let output = process::Command::new(python)
+        .arg("-c")
+        .arg(script)
+        .output()
+        .map_err(|source| PythonDocxDecryptError::LaunchFailed {
+            python: python.display().to_string(),
+            source,
+        })?;
+
+    match output.status.code() {
+        Some(0) => {
+            let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if version.is_empty() {
+                Err(PythonDocxDecryptError::Failed {
+                    python: python.display().to_string(),
+                    details: "managed runtime package probe produced an empty version string"
+                        .to_string(),
+                })
+            } else {
+                Ok(MsoffcryptoToolProbe::Version(version))
+            }
+        }
+        Some(3) => Ok(MsoffcryptoToolProbe::Missing),
+        _ => Err(PythonDocxDecryptError::Failed {
+            python: python.display().to_string(),
+            details: command_failure_details(&output),
+        }),
+    }
+}
+
+fn find_bootstrap_python() -> std::result::Result<PathBuf, PythonDocxDecryptError> {
+    for candidate in ["python3", "python"] {
+        match process::Command::new(candidate)
+            .arg("-c")
+            .arg("import sys")
+            .output()
+        {
+            Ok(output) if output.status.success() => return Ok(PathBuf::from(candidate)),
+            Ok(_) => continue,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
+            Err(source) => {
+                return Err(PythonDocxDecryptError::LaunchFailed {
+                    python: candidate.to_string(),
+                    source,
+                });
+            }
+        }
+    }
+    Err(PythonDocxDecryptError::PythonNotFound)
+}
+
+fn managed_python_venv_dir() -> PathBuf {
+    managed_runtime_root()
+        .join("python")
+        .join(format!("msoffcrypto-tool-{MSOFFCRYPTO_TOOL_VERSION}"))
+}
+
+fn managed_runtime_root() -> PathBuf {
+    if let Some(explicit) = env::var_os("DOCWARP_HOME") {
+        return PathBuf::from(explicit);
+    }
+
+    #[cfg(windows)]
+    if let Some(local_app_data) = env::var_os("LOCALAPPDATA") {
+        return PathBuf::from(local_app_data).join("docwarp");
+    }
+
+    if let Some(xdg_data_home) = env::var_os("XDG_DATA_HOME") {
+        return PathBuf::from(xdg_data_home).join("docwarp");
+    }
+
+    if let Some(home) = env::var_os("HOME") {
+        return PathBuf::from(home)
+            .join(".local")
+            .join("share")
+            .join("docwarp");
+    }
+
+    PathBuf::from(".docwarp")
+}
+
+#[cfg(windows)]
+fn managed_python_executable(venv_dir: &Path) -> PathBuf {
+    venv_dir.join("Scripts").join("python.exe")
+}
+
+#[cfg(not(windows))]
+fn managed_python_executable(venv_dir: &Path) -> PathBuf {
+    venv_dir.join("bin").join("python")
+}
+
+fn command_failure_details(output: &process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !stderr.is_empty() {
+        stderr
+    } else if !stdout.is_empty() {
+        stdout
+    } else {
+        format!("process exited with status {}", output.status)
     }
 }
 

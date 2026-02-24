@@ -59,9 +59,8 @@ docwarp docx2md ./contracts --output ./build/md --glob "**/*.docx"
 ## Password-Protected DOCX
 
 - `docwarp docx2md` supports password-protected DOCX files with `--password`.
-- Decryption runs with a built-in Rust path first.
-- If the Rust path cannot decrypt a file variant, `docwarp` falls back to Python (`msoffcrypto-tool`) when available.
-- Install fallback support with `pip install msoffcrypto-tool` if you need broader compatibility.
+- Decryption uses an auto-managed Python runtime for encrypted Office containers.
+- On first encrypted conversion, `docwarp` bootstraps a private venv under `$DOCWARP_HOME` (or platform data dir), installs pinned `msoffcrypto-tool`, and verifies the wheel hash before use.
 
 Run command-specific help for detailed examples:
 
