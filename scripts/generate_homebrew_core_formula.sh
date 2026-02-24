@@ -3,7 +3,7 @@ set -euo pipefail
 
 if [[ $# -lt 4 || $# -gt 5 ]]; then
   echo "usage: $0 <owner> <repo> <tag> <output_path> [sha256]" >&2
-  echo "example: $0 N10ELabs docwarp v0.1.0 packaging/homebrew-core/docwarp.rb" >&2
+  echo "example: $0 N10ELabs docwarp v0.1.1 packaging/homebrew-core/docwarp.rb" >&2
   exit 1
 fi
 
@@ -14,7 +14,7 @@ output_path="$4"
 sha_override="${5:-}"
 
 if [[ "${tag}" != v* ]]; then
-  echo "tag must start with v (for example: v0.1.0)" >&2
+  echo "tag must start with v (for example: v0.1.1)" >&2
   exit 1
 fi
 

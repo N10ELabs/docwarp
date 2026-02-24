@@ -2,13 +2,13 @@
 
 ## Prerelease Validation
 
-Use a prerelease tag to validate the end-to-end release workflow before `v0.1.0`.
+Use a prerelease tag to validate the end-to-end release workflow before `v0.1.1`.
 
 Example:
 
 ```bash
-git tag v0.1.0-rc.1
-git push origin v0.1.0-rc.1
+git tag v0.1.1-rc.1
+git push origin v0.1.1-rc.1
 ```
 
 Expected workflow behavior:
@@ -33,8 +33,8 @@ Manual checks after workflow completion:
 After prerelease validation succeeds, create the stable tag:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.1
+git push origin v0.1.1
 ```
 
 Then:

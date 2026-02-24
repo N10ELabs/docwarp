@@ -18,7 +18,7 @@ You can verify downloaded files with `checksums.txt` from the same release.
 ```bash
 # Example: Linux x86_64
 curl -fL -o docwarp \
-  https://github.com/N10ELabs/docwarp/releases/download/v0.1.0/docwarp-linux-x86_64
+  https://github.com/N10ELabs/docwarp/releases/download/v0.1.1/docwarp-linux-x86_64
 
 chmod +x ./docwarp
 ./docwarp --help
@@ -28,7 +28,7 @@ chmod +x ./docwarp
 
 ```powershell
 Invoke-WebRequest `
-  -Uri "https://github.com/N10ELabs/docwarp/releases/download/v0.1.0/docwarp-windows-x86_64.exe" `
+  -Uri "https://github.com/N10ELabs/docwarp/releases/download/v0.1.1/docwarp-windows-x86_64.exe" `
   -OutFile ".\docwarp.exe"
 
 .\docwarp.exe --help
@@ -50,7 +50,7 @@ If you need to install from a specific release formula file:
 
 ```bash
 curl -fL -o docwarp.rb \
-  https://github.com/N10ELabs/docwarp/releases/download/v0.1.0/docwarp.rb
+  https://github.com/N10ELabs/docwarp/releases/download/v0.1.1/docwarp.rb
 
 brew install --formula ./docwarp.rb
 ```

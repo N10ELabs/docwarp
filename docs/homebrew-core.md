@@ -11,9 +11,9 @@ That only works after `docwarp` is merged into `homebrew/core`.
 ## Prerequisites
 
 - GitHub repository visibility is **public**.
-- A release tag exists (for example `v0.1.0`).
+- A release tag exists (for example `v0.1.1`).
 - You can download the source archive URL:
-  - `https://github.com/N10ELabs/docwarp/archive/refs/tags/v0.1.0.tar.gz`
+  - `https://github.com/N10ELabs/docwarp/archive/refs/tags/v0.1.1.tar.gz`
 
 ## Generate a Core-Candidate Formula
 
@@ -23,7 +23,7 @@ From repo root:
 scripts/generate_homebrew_core_formula.sh \
   N10ELabs \
   docwarp \
-  v0.1.0 \
+  v0.1.1 \
   packaging/homebrew-core/docwarp.rb
 ```
 
