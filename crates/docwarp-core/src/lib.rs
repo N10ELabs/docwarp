@@ -4,6 +4,8 @@ pub mod report;
 pub mod style_map;
 pub mod warning;
 
+pub const DOCWARP_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 pub use config::{AppConfig, MarkdownFlavor, UnsupportedPolicy};
 pub use model::{Block, Document, DocumentStats, Inline};
 pub use report::{ConversionDirection, ConversionReport, REPORT_SCHEMA_VERSION};

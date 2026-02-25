@@ -33,6 +33,19 @@ fn root_help_includes_examples() -> Result<()> {
 }
 
 #[test]
+fn root_version_flag_prints_workspace_version() -> Result<()> {
+    let output = run_docwarp(["--version"])?;
+    assert_command_success(&output, "root --version should succeed")?;
+    let stdout = stdout_text(&output);
+    let expected = format!("docwarp {}", env!("CARGO_PKG_VERSION"));
+    assert!(
+        stdout.contains(&expected),
+        "expected version output to contain '{expected}', got:\n{stdout}"
+    );
+    Ok(())
+}
+
+#[test]
 fn md2docx_help_includes_examples() -> Result<()> {
     let output = run_docwarp(["md2docx", "--help"])?;
     assert_command_success(&output, "md2docx --help should succeed")?;

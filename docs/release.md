@@ -1,5 +1,22 @@
 # Release Runbook
 
+## One-Command Quick Action
+
+After updating `[workspace.package].version` in `Cargo.toml`:
+
+```bash
+scripts/release_quick.sh 0.1.2
+```
+
+What this does:
+
+- validates Cargo version + CLI `--version`
+- runs workspace tests (unless `--skip-tests`)
+- commits and pushes release prep to `main`
+- pushes prerelease tag `vX.Y.Z-rc.1` (unless `--skip-rc`)
+- pushes stable tag `vX.Y.Z` (triggers GitHub Release workflow)
+- waits for release `docwarp.rb` and updates `N10ELabs/homebrew-tap`
+
 ## Prerelease Validation
 
 Use a prerelease tag to validate the end-to-end release workflow before `v0.1.1`.

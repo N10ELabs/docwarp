@@ -10,7 +10,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, anyhow};
 use clap::{Parser, Subcommand};
 use docwarp_core::{
-    AppConfig, ConversionDirection, ConversionReport, ConversionWarning, Document, StyleMap,
+    AppConfig, ConversionDirection, ConversionReport, ConversionWarning, DOCWARP_VERSION, Document,
+    StyleMap,
     UnsupportedPolicy, resolve_style_map, style_map,
 };
 use docwarp_docx::{
@@ -71,6 +72,7 @@ const DEFAULT_BACKUP_DIR_NAME: &str = "docwarp_backups";
 
 #[derive(Debug, Parser)]
 #[command(name = "docwarp")]
+#[command(version = DOCWARP_VERSION)]
 #[command(about = "Convert documentation between Markdown and DOCX")]
 #[command(long_about = CLI_LONG_ABOUT)]
 #[command(after_long_help = CLI_AFTER_LONG_HELP)]
@@ -306,8 +308,7 @@ struct StartupLine {
 
 fn emit_startup_header(guided_mode: bool) {
     let frame = startup_frame();
-    let version = env!("CARGO_PKG_VERSION");
-    let title = format!("{} v{version}", frame.title_prefix());
+    let title = format!("{} v{}", frame.title_prefix(), DOCWARP_VERSION);
     let mut lines = vec![StartupLine {
         text: frame.conversion_label().to_string(),
         dim: false,
