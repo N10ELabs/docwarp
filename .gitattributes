@@ -1,0 +1,3 @@
+scripts/*.sh linguist-detectable=false
+Formula/*.rb linguist-detectable=false
+packaging/homebrew-core/*.rb linguist-detectable=false
